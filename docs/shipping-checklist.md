@@ -23,7 +23,12 @@ fleet's fresh-install configuration.
 - [ ] Each workstation user has a 10kR Google Workspace email in `nixos-config`.
       Onboarding creates or selects a Chrome work profile for that exact address,
       guides Google sign-in and Chrome sync consent, and verifies the account and
-      requested sync configuration. Workspace policies must allow Chrome Sync.
+      required sync configuration: the exact work account, completed consent,
+      active sync transport, no pending authentication or encryption recovery,
+      and every supported category enabled (including bookmarks, preferences,
+      extensions, tabs, history, autofill, and passwords). Effective Workspace
+      policies must permit these categories. Missing consent, disabled categories,
+      a different account, or a policy blocking sync must fail verification.
       The app must not treat merely opening a Google sign-in page as completion.
 - [ ] Enrollment creates or reuses separate authentication and commit-signing SSH
       keys in the selected 1Password vault without exporting private keys.
