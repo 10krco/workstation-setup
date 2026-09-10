@@ -227,7 +227,11 @@
       devShells = forAllSystems (system: {
         default = (pkgsFor system).mkShell {
           inputsFrom = [ self.packages.${system}.default ];
-          packages = [ (pkgsFor system).nixfmt ];
+          packages = with pkgsFor system; [
+            nixfmt
+            xvfb-run
+            dbus
+          ];
         };
       });
 
