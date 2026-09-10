@@ -19,3 +19,9 @@ tenkr-workstation-setup
 ```
 
 The flake exports `packages.<system>.default` and `nixosModules.default`.
+
+The NixOS module enables the 1Password CLI and desktop application, including
+their security wrappers and Polkit ownership for managed users. The host's
+Nixpkgs configuration must permit the unfree `1password` and `1password-cli`
+packages. The application retains the system wrapper paths so CLI integration
+uses the installed security wrapper rather than an unwrapped store binary.
