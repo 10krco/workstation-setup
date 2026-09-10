@@ -226,8 +226,13 @@
 
       devShells = forAllSystems (system: {
         default = (pkgsFor system).mkShell {
+          DBUS_SESSION_CONFIG = "${(pkgsFor system).dbus}/share/dbus-1/session.conf";
           inputsFrom = [ self.packages.${system}.default ];
-          packages = [ (pkgsFor system).nixfmt ];
+          packages = with pkgsFor system; [
+            nixfmt
+            xvfb-run
+            dbus
+          ];
         };
       });
 
