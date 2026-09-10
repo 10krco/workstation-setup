@@ -18,6 +18,7 @@ STEPS = (
     Step("onepassword", "Connect 1Password", "Sign in and enable CLI and SSH agent integration."),
     Step("github", "Connect GitHub", "Authenticate GitHub and register separate authentication and signing keys."),
     Step("keyring", "Protect application secrets", "Store the encrypted GNOME Keyring password in 1Password."),
+    Step("chrome", "Connect your work browser", "Sign in to Chrome with your work email and enable profile sync."),
     Step("tailscale", "Join the 10kR network", "Enroll this workstation in Tailscale and enable Tailscale SSH."),
     Step("home-manager", "Personalize your environment", "Optionally activate a Home Manager configuration from GitHub.", False),
 )

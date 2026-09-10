@@ -103,12 +103,28 @@ def home_manager() -> ProbeResult:
     return ProbeResult(False, "No Home Manager configuration is active. This step is optional.")
 
 
+def chrome() -> ProbeResult:
+    from .identity import git_identity
+    from .chrome_setup import profile_path
+    try:
+        _, email = git_identity()
+        receipt = json.loads((Path.home() / ".config/10kr/workstation-setup/chrome-verification.json").read_text())
+        if (receipt["email"] == email and receipt["profile"] == str(profile_path())
+                and (profile_path() / "Default/Preferences").is_file()
+                and (Path.home() / ".local/share/applications/10kr-work-browser.desktop").is_file()):
+            return ProbeResult(True, "Your work browser's account and sync settings were verified.")
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        pass
+    return ProbeResult(False, "Sign in to the work browser and verify its sync settings.")
+
+
 PROBES = {
     "password": password,
     "fingerprint": fingerprint,
     "onepassword": onepassword,
     "github": github,
     "keyring": keyring,
+    "chrome": chrome,
     "tailscale": tailscale,
     "home-manager": home_manager,
 }

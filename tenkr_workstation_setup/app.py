@@ -18,6 +18,8 @@ from .network import connect as connect_network
 from .github_auth import login as github_login
 from .ssh_setup import configure as configure_ssh
 from .identity import git_identity
+from .chrome_pipe import ChromePipe
+from .chrome_setup import profile_path, record as record_chrome
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -32,6 +34,8 @@ class SetupWindow(Adw.ApplicationWindow):
         self._home_busy = False
         self._network_cancel = None
         self._github_busy = False
+        self._chrome_busy = False
+        self._chrome = None
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -126,6 +130,9 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "github":
             self._github_dialog()
             return
+        if step.key == "chrome":
+            self._chrome_dialog()
+            return
         actions = {
             "onepassword": ["1password"],
         }
@@ -146,6 +153,50 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _chrome_dialog(self):
+        if self._chrome_busy:
+            return
+        try:
+            _, email = git_identity()
+        except RuntimeError as error:
+            self._message("Work identity is missing", str(error))
+            return
+        dialog = Adw.AlertDialog(heading="Connect your work browser",
+            body=f"Open the work browser and sign in to Chrome using {email}. Enable sync for all available categories, then return here and verify. Google may ask you to approve your organization’s profile policies.")
+        dialog.add_response("close", "Close")
+        dialog.add_response("open", "Open work browser")
+        dialog.add_response("verify", "Verify account and sync")
+
+        def response(_dialog, choice):
+            if choice not in {"open", "verify"}:
+                return
+            self._chrome_busy = True
+            def work():
+                try:
+                    if self._chrome is None or self._chrome.process.poll() is not None:
+                        if self._chrome is not None:
+                            self._chrome.close()
+                        self._chrome = ChromePipe(profile_path())
+                        self._chrome.call("Browser.getVersion")
+                    if choice == "verify":
+                        record_chrome(self._chrome)
+                        self._chrome.close()
+                        self._chrome = None
+                        message = "Your work account and sync settings are verified. Open 10kR Work Browser from the application launcher after setup."
+                    else:
+                        message = f"Sign in to Chrome with {email}, enable all sync categories, then return and choose Verify account and sync."
+                except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    message = str(error)
+                GLib.idle_add(done, message)
+            def done(message):
+                self._chrome_busy = False
+                self._message("Work browser", message)
+                self._refresh()
+                return GLib.SOURCE_REMOVE
+            threading.Thread(target=work, daemon=True).start()
+        dialog.connect("response", response)
+        dialog.present(self)
 
     def _github_dialog(self):
         if self._github_busy:
