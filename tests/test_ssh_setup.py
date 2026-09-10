@@ -72,6 +72,16 @@ class SshSetupTest(unittest.TestCase):
 
 
 class AuthenticationTest(unittest.TestCase):
+    def test_failed_diagnostic_retains_identity_conflict_location(self):
+        from tenkr_workstation_setup.ssh_setup import ssh_identity_locations
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / ".ssh").mkdir()
+            (home / ".ssh/config").write_text("Host *\n  IdentityFile other.pub\n")
+            for error in (OSError("unavailable"), subprocess.TimeoutExpired("ssh", 5)):
+                with patch("tenkr_workstation_setup.ssh_setup.subprocess.run", side_effect=error):
+                    self.assertIn("config:2: IdentityFile other.pub", ssh_identity_locations(home))
+
     @patch("tenkr_workstation_setup.ssh_setup.ssh_identity_locations", return_value="/tmp/alice/.ssh/config:9: IdentityFile unrelated.pub")
     @patch("tenkr_workstation_setup.ssh_setup.subprocess.run")
     @patch("tenkr_workstation_setup.ssh_setup.command")
@@ -80,8 +90,9 @@ class AuthenticationTest(unittest.TestCase):
         effective = ("hostname github.com\nidentitiesonly yes\n"
                      "identityagent /tmp/alice/.1password/agent.sock\n"
                      "identityfile /tmp/alice/.ssh/tenkr-github-authentication.pub\n")
+        host_keys = ["ssh-ed25519 AAAA", "future-key BBBB", None]
         def commands(*args):
-            return effective if args[0] == "ssh" else json.dumps({"ssh_keys": ["ssh-ed25519 AAAA"]})
+            return effective if args[0] == "ssh" else json.dumps({"ssh_keys": host_keys})
         command.side_effect = commands
         def authenticate(args, **kwargs):
             self.assertIn("StrictHostKeyChecking=yes", args)
@@ -92,6 +103,11 @@ class AuthenticationTest(unittest.TestCase):
         verify_authentication("alice", home)
         with self.assertRaises(RuntimeError):
             verify_authentication("other-account", home)
+        host_keys = ["future-key BBBB"]
+        run.reset_mock()
+        with self.assertRaisesRegex(RuntimeError, "recognized SSH host keys"):
+            verify_authentication("alice", home)
+        run.assert_not_called()
         effective += "identityfile /tmp/alice/.ssh/unrelated.pub\n"
         run.reset_mock()
         with self.assertRaises(RuntimeError):
@@ -129,6 +145,18 @@ class SigningIntegrationTest(unittest.TestCase):
 
 
 class ConfigurationRetryTest(unittest.TestCase):
+    def test_same_key_for_both_roles_is_rejected_before_registration(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice (Engineer)", "alice@10kr.co")), \
+             patch("tenkr_workstation_setup.ssh_setup.shutil.which", return_value="/example/op-ssh-sign"), \
+             patch("tenkr_workstation_setup.ssh_setup.command", return_value='{"login":"alice"}'), \
+             patch("tenkr_workstation_setup.ssh_setup.verify_email"), \
+             patch("tenkr_workstation_setup.ssh_setup.ensure_item", return_value=("item", "ssh-ed25519 AAAA")), \
+             patch("tenkr_workstation_setup.ssh_setup.register") as register:
+            with self.assertRaisesRegex(RuntimeError, "different keys"):
+                configure("Personal", directory)
+            register.assert_not_called()
+
     def test_unbounded_legacy_block_preserves_personal_configuration_by_refusing(self):
         personal = "# 10kR 1Password SSH agent\nHost *\n  IdentityFile ~/.ssh/id_ed25519\n"
         for suffix in ("", "\nHost work\n  HostName work.example\n"):
