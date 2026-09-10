@@ -73,6 +73,12 @@ incomplete. Successful fingerprint enumeration with no devices makes fingerprint
 enrollment optional; enumeration errors still block it. Isolated GUI and probe
 tests cover these decisions.
 
+The Wi-Fi VM uses simulated radios and a WPA2 access point to exercise the real
+NetworkManager settings UI and secret-agent prompt. It verifies cancel and retry,
+connects with a fixture password, receives a DHCP address, returns to setup without
+claiming enrollment is complete, and confirms the setup-only network agent exits
+with the guided session. Target-hardware Wi-Fi remains part of the final T14 run.
+
 A separate authenticated acceptance VM is preserved for the user's remaining
 account-consent steps. Do not capture vault screens or secret-bearing output from
 that VM. Full Workspace sync, real key registration/signing, the intended tailnet,
