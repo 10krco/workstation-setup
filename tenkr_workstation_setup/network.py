@@ -30,8 +30,12 @@ def verify(executable="tailscale"):
     status = json.loads(command(executable, "status", "--json"))
     prefs = json.loads(command(executable, "debug", "prefs"))
     user = pwd.getpwuid(os.getuid()).pw_name
-    return (status.get("BackendState") == "Running"
-            and prefs.get("RunSSH") is True and prefs.get("OperatorUser") == user)
+    if not (status.get("BackendState") == "Running"
+            and prefs.get("RunSSH") is True and prefs.get("OperatorUser") == user):
+        return False
+    policy = json.loads(Path("/etc/10kr/workstation-setup-policy.json").read_text())
+    expected = policy.get("tailnetName")
+    return bool(expected) and status.get("CurrentTailnet", {}).get("Name") == expected
 
 
 def connect(cancel, show_url, progress, timeout=300):
@@ -46,7 +50,7 @@ def connect(cancel, show_url, progress, timeout=300):
         status = json.loads(command("tailscale", "status", "--json"))
         if status.get("BackendState") == "Running":
             if not verify():
-                raise RuntimeError("Connected, but operator access or Tailscale SSH is not configured. Retry setup.")
+                raise RuntimeError("Connected, but the required work tailnet, operator access, or Tailscale SSH is not configured. Check the selected Tailscale account and retry.")
             return True
         url = status.get("AuthURL", "")
         if url and url != last_url:

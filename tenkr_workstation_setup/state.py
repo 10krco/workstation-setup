@@ -36,10 +36,3 @@ class EnrollmentState:
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         marker = self.root / f"{step.key}.complete"
         marker.touch(mode=0o600, exist_ok=True)
-
-    def finish(self) -> None:
-        missing = [step.title for step in STEPS if step.required and not self.is_complete(step)]
-        if missing:
-            raise ValueError(f"Required setup remains: {', '.join(missing)}")
-        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        (self.root / "complete").touch(mode=0o600, exist_ok=True)

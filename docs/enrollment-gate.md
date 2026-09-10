@@ -30,7 +30,7 @@ unmanaged recovery access, and persistence across reboot. Module evaluation also
 checks that the PAM hooks are present alongside the restricted GDM session list.
 
 This boundary is one part of the shipping checklist. The privileged completion
-verifier still needs to be connected to the GUI. Polkit authorization, Tailscale
+verifier is connected to the GUI (see `completion-verification.md`). Polkit authorization, Tailscale
 SSH (which does not use the OpenSSH PAM stack), and arbitrary user code run by
 optional Home Manager activation need their own integration review and tests.
 Do not enable enrollment on shipped images until the full acceptance checklist

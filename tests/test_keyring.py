@@ -67,6 +67,19 @@ class KeyringRuntimeTest(unittest.TestCase):
             props = dbus.Interface(bus.get_object(SERVICE, first), "org.freedesktop.DBus.Properties")
             self.assertTrue(props.Get("org.freedesktop.Secret.Collection", "Locked", timeout=10))
             self.assertEqual(migrate(bus, b"replacement-test-password"), first)
+            from tenkr_workstation_setup import verification
+            reference = Path.home() / ".config/10kr/gnome-keyring-1password-secret-reference"
+            reference.parent.mkdir(parents=True, exist_ok=True)
+            reference.write_text("op://Test/item/password\n")
+            with patch.object(verification.keyring_setup, "read_password", return_value=b"wrong-password"), \
+                 patch.object(verification.ssh_setup, "command") as command:
+                with self.assertRaises(dbus.DBusException):
+                    verification.keyring()
+                command.assert_not_called()
+            with patch.object(verification.keyring_setup, "read_password", return_value=b"replacement-test-password"), \
+                 patch.object(verification.ssh_setup, "command") as command:
+                verification.keyring()
+                self.assertIn("tenkr-gnome-keyring-unlock.service", command.call_args.args)
             self.assertFalse(props.Get("org.freedesktop.Secret.Collection", "Locked", timeout=10))
             self.assertEqual(str(service.ReadAlias("login", timeout=10)), first)
             self.assertEqual(str(service.ReadAlias("default", timeout=10)), first)

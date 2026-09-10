@@ -9,6 +9,15 @@ from tenkr_workstation_setup.network import connect, prepare, verify
 
 
 class NetworkTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.network.Path.read_text", return_value='{"tailnetName":"work.example"}')
+    @patch("tenkr_workstation_setup.network.pwd.getpwuid", return_value=Mock(pw_name="alice"))
+    @patch("tenkr_workstation_setup.network.command")
+    def test_wrong_tailnet_is_rejected(self, command, _account, _policy):
+        for name, expected in (("personal.example", False), ("work.example", True)):
+            command.side_effect = [json.dumps({"BackendState": "Running", "CurrentTailnet": {"Name": name}}),
+                                   json.dumps({"OperatorUser": "alice", "RunSSH": True})]
+            self.assertEqual(verify(), expected)
+
     @patch("tenkr_workstation_setup.network.command")
     def test_unconfigured_user_cannot_acquire_operator_access(self, command):
         with tempfile.TemporaryDirectory() as directory:

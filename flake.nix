@@ -57,7 +57,10 @@
                 exec ${cfg.normalSessionCommand}
               fi
 
-              exec cage -d -- ${lib.getExe cfg.package}
+              cage -d -- ${lib.getExe cfg.package}
+              if ${enrollmentGate} "$user"; then
+                exec ${cfg.normalSessionCommand}
+              fi
             '';
           };
         in
@@ -71,6 +74,11 @@
               default = [ ];
               example = [ "alice" ];
               description = "Users who must complete workstation enrollment.";
+            };
+            tailnetName = lib.mkOption {
+              type = lib.types.str;
+              default = "";
+              description = "Exact CurrentTailnet.Name required before enrollment completes.";
             };
             normalSessionCommand = lib.mkOption {
               type = lib.types.str;
@@ -95,12 +103,19 @@
                 message = "Root must remain available for workstation enrollment recovery.";
               }
               {
+                assertion = cfg.tailnetName != "";
+                message = "Workstation enrollment requires the intended Tailscale tailnet name.";
+              }
+              {
                 assertion = config.users.mutableUsers;
                 message = "Workstation enrollment requires mutable users to preserve chosen passwords.";
               }
             ];
 
             environment.systemPackages = [ cfg.package ];
+            environment.etc."10kr/workstation-setup-policy.json".text = builtins.toJSON {
+              tailnetName = cfg.tailnetName;
+            };
             services.fprintd.enable = true;
             services.tailscale.enable = true;
             networking.networkmanager.enable = true;
@@ -150,6 +165,8 @@
                     send_interface="com.tenkr.WorkstationSetup" send_member="SetPassword"/>
                   <allow send_destination="com.tenkr.WorkstationSetup"
                     send_interface="com.tenkr.WorkstationSetup" send_member="PrepareNetwork"/>
+                  <allow send_destination="com.tenkr.WorkstationSetup"
+                    send_interface="com.tenkr.WorkstationSetup" send_member="Complete"/>
                 </policy>
               </busconfig>
             '';
@@ -164,6 +181,11 @@
               ];
               environment.TENKR_CHPASSWD = "${pkgs.shadow}/bin/chpasswd";
               environment.TENKR_TAILSCALE = "${pkgs.tailscale}/bin/tailscale";
+              environment.TENKR_TAILNET = cfg.tailnetName;
+              environment.TENKR_MANAGED_USERS = builtins.toJSON cfg.managedUsers;
+              environment.TENKR_VERIFIER = "${cfg.package}/bin/tenkr-workstation-setup-verify";
+              environment.TENKR_SYSTEMD_RUN = "${pkgs.systemd}/bin/systemd-run";
+              environment.TENKR_SYSTEMCTL = "${pkgs.systemd}/bin/systemctl";
               serviceConfig = {
                 Type = "dbus";
                 BusName = "com.tenkr.WorkstationSetup";
@@ -198,6 +220,9 @@
           package = self.packages.${system}.default;
         };
         login-gate-vm = (pkgsFor system).callPackage ./nix/login-gate-vm.nix { };
+        completion-vm = (pkgsFor system).callPackage ./nix/completion-vm.nix {
+          package = self.packages.${system}.default;
+        };
         module =
           let
             evaluated = nixpkgs.lib.nixosSystem {
@@ -212,6 +237,7 @@
                   services.tenkr-workstation-setup = {
                     enable = true;
                     managedUsers = [ "alice" ];
+                    tailnetName = "example.ts.net";
                   };
                 }
               ];

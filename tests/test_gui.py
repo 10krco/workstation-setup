@@ -30,3 +30,23 @@ class GuiTest(unittest.TestCase):
                 while GLib.MainContext.default().pending():
                     GLib.MainContext.default().iteration(False)
             window.close()
+
+    def test_only_privileged_success_closes_setup(self):
+        os.environ.pop("WAYLAND_DISPLAY", None)
+        os.environ["GTK_A11Y"] = "none"
+        os.environ["GIO_USE_VFS"] = "local"
+        from tenkr_workstation_setup.app import SetupApplication, SetupWindow
+        app = SetupApplication()
+        app.set_application_id("com.tenkr.WorkstationSetup.CompletionTest")
+        app.register(None)
+        with patch("tenkr_workstation_setup.app.threading.Thread.start"):
+            window = SetupWindow(app)
+            with patch.object(window, "close") as close, patch.object(window, "_message"), \
+                 patch.object(window, "_refresh"):
+                window._completion_result(["github"], None)
+                close.assert_not_called()
+                window._completion_result([], "Service unavailable")
+                close.assert_not_called()
+                window._completion_result([], None)
+                close.assert_called_once()
+            window.close()

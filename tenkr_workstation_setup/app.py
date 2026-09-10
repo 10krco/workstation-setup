@@ -41,6 +41,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self._chrome_busy = False
         self._chrome = None
         self._keyring_busy = False
+        self._completing = False
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -115,15 +116,14 @@ class SetupWindow(Adw.ApplicationWindow):
                 "emblem-ok-symbolic" if complete else "preferences-system-symbolic"
             )
         required_complete = all(results[step.key].complete for step in STEPS if step.required)
-        self.finish_button.set_sensitive(required_complete)
+        self.finish_button.set_sensitive(required_complete and not self._completing)
 
         if finish_after_refresh:
             if not required_complete:
                 missing = [step.title for step in STEPS if step.required and not results[step.key].complete]
                 self._message("Setup is not finished", f"Required setup remains: {', '.join(missing)}")
             else:
-                self.state.finish()
-                self.close()
+                self._begin_completion()
 
         return GLib.SOURCE_REMOVE
 
@@ -540,6 +540,46 @@ class SetupWindow(Adw.ApplicationWindow):
 
     def _finish(self, _button: Gtk.Button) -> None:
         self._refresh(finish_after_refresh=True)
+
+    def _begin_completion(self):
+        if self._completing:
+            return
+        if any((self._home_busy, self._github_busy, self._chrome_busy, self._keyring_busy)):
+            self._message("Setup is still running", "Wait for the current setup operation to finish, then retry.")
+            return
+        self._completing = True
+        self.group.set_sensitive(False)
+        self.finish_button.set_sensitive(False)
+        self.finish_button.set_label("Verifying setup…")
+        threading.Thread(target=self._complete, daemon=True).start()
+
+    def _complete(self):
+        missing, error = [], None
+        try:
+            if self._chrome is not None:
+                self._chrome.close()
+                self._chrome = None
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            result = bus.call_sync("com.tenkr.WorkstationSetup", "/com/tenkr/WorkstationSetup",
+                                   "com.tenkr.WorkstationSetup", "Complete", None,
+                                   GLib.VariantType.new("(as)"), Gio.DBusCallFlags.NONE, 960000, None)
+            missing = result.unpack()[0]
+        except Exception:
+            error = "Final verification could not finish. Keep 1Password unlocked, close the work browser, and retry."
+        GLib.idle_add(self._completion_result, missing, error)
+
+    def _completion_result(self, missing, error):
+        self._completing = False
+        self.group.set_sensitive(True)
+        self.finish_button.set_label("Finish setup")
+        if error or missing:
+            titles = {step.key: step.title for step in STEPS}
+            self._message("Setup is not finished", error or "Recheck: " + ", ".join(
+                titles.get(key, "Required setup") for key in missing))
+            self._refresh()
+        else:
+            self.close()
+        return GLib.SOURCE_REMOVE
 
 
 class SetupApplication(Adw.Application):

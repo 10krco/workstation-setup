@@ -66,6 +66,14 @@ stdenvNoCC.mkDerivation {
     main()
     EOF
     chmod +x "$out/bin/tenkr-workstation-setup-service"
+    cat > "$out/bin/tenkr-workstation-setup-verify" <<EOF
+    #!${python}/bin/python -I
+    import sys
+    sys.path.insert(0, "$out/lib/tenkr-workstation-setup")
+    from tenkr_workstation_setup.verification import main
+    raise SystemExit(main())
+    EOF
+    chmod +x "$out/bin/tenkr-workstation-setup-verify"
     runHook postInstall
   '';
 
