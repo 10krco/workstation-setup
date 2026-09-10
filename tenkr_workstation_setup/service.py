@@ -12,8 +12,8 @@ import pam
 
 from .password_backend import set_password
 from .network import prepare
-from .network import command as network_command
-from .completion import complete, worker
+from .network import verify_enrollment, enable_remote, restrict
+from .completion import complete, worker, published
 
 BUS_NAME = "com.tenkr.WorkstationSetup"
 OBJECT_PATH = "/com/tenkr/WorkstationSetup"
@@ -56,12 +56,8 @@ class EnrollmentService(dbus.service.Object):
             missing.append("fingerprint")
         try:
             executable = os.environ["TENKR_TAILSCALE"]
-            status = json.loads(network_command(executable, "status", "--json"))
-            prefs = json.loads(network_command(executable, "debug", "prefs"))
             expected = os.environ["TENKR_TAILNET"]
-            if (not expected or status.get("BackendState") != "Running"
-                    or status.get("CurrentTailnet", {}).get("Name") != expected
-                    or prefs.get("OperatorUser") != user or prefs.get("RunSSH") is not True):
+            if not verify_enrollment(executable, expected):
                 missing.append("tailscale")
         except (OSError, ValueError, KeyError, RuntimeError):
             missing.append("tailscale")
@@ -73,6 +69,9 @@ class EnrollmentService(dbus.service.Object):
             user = self.caller(sender)
             if user not in json.loads(os.environ["TENKR_MANAGED_USERS"]):
                 raise PermissionError("This account is not configured for enrollment.")
+            # Retrying after a lost success reply must not undo completed setup.
+            if published(user):
+                return []
             daemon = dbus.Interface(self.bus.get_object(
                 "org.freedesktop.DBus", "/org/freedesktop/DBus"), "org.freedesktop.DBus")
             pid = int(daemon.GetConnectionUnixProcessID(sender))
@@ -81,7 +80,9 @@ class EnrollmentService(dbus.service.Object):
             display = environment.get(b"WAYLAND_DISPLAY", b"").decode()
             return complete(user, lambda: worker(user, display, os.environ["TENKR_VERIFIER"],
                                                  os.environ["TENKR_SYSTEMD_RUN"], os.environ["TENKR_SYSTEMCTL"]),
-                            self.system_checks, lambda: self.caller(sender) == user)
+                            self.system_checks, lambda: self.caller(sender) == user,
+                            activate_network=lambda: enable_remote(user, os.environ["TENKR_TAILSCALE"]),
+                            rollback_network=lambda: restrict(os.environ["TENKR_TAILSCALE"]))
         except (PermissionError, RuntimeError) as error:
             raise dbus.exceptions.DBusException(str(error), name=BUS_NAME + ".Error") from None
         except Exception:
@@ -91,12 +92,26 @@ class EnrollmentService(dbus.service.Object):
     @dbus.service.method(BUS_NAME, in_signature="", out_signature="", sender_keyword="sender")
     def PrepareNetwork(self, sender=None):
         try:
-            prepare(self.caller(sender), os.environ["TENKR_TAILSCALE"])
+            user = self.caller(sender)
+            if user not in json.loads(os.environ["TENKR_MANAGED_USERS"]):
+                raise PermissionError("This account is not configured for enrollment.")
+            prepare(user, os.environ["TENKR_TAILSCALE"])
         except (PermissionError, RuntimeError) as error:
             raise dbus.exceptions.DBusException(str(error), name=BUS_NAME + ".Error") from None
         except Exception:
             raise dbus.exceptions.DBusException("Network setup failed. Please retry.",
                                                 name=BUS_NAME + ".Error") from None
+
+    @dbus.service.method(BUS_NAME, in_signature="", out_signature="b", sender_keyword="sender")
+    def VerifyNetwork(self, sender=None):
+        try:
+            user = self.caller(sender)
+            if user not in json.loads(os.environ["TENKR_MANAGED_USERS"]):
+                return False
+            return verify_enrollment(os.environ["TENKR_TAILSCALE"], os.environ["TENKR_TAILNET"],
+                                     operator=user if published(user) else None)
+        except Exception:
+            return False
 
     @dbus.service.method(BUS_NAME, in_signature="ss", out_signature="", sender_keyword="sender")
     def SetPassword(self, current, replacement, sender=None):

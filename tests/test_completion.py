@@ -18,9 +18,12 @@ class CompletionTest(unittest.TestCase):
         self.user = Mock(return_value=[])
         self.system = Mock(return_value=[])
         self.active = Mock(return_value=True)
+        self.activate = Mock()
+        self.rollback = Mock()
 
     def finish(self):
-        return complete("alice", self.user, self.system, self.active, self.root)
+        return complete("alice", self.user, self.system, self.active, self.root,
+                        self.activate, self.rollback)
 
     def test_live_failures_and_inactive_session_never_publish_completion(self):
         self.user.return_value = ["github"]
@@ -32,6 +35,22 @@ class CompletionTest(unittest.TestCase):
         self.active.return_value = False
         with self.assertRaises(PermissionError):
             self.finish()
+        self.assertFalse((self.root / "completed/alice").exists())
+        self.activate.assert_not_called()
+
+    def test_failed_remote_enablement_rolls_back_and_does_not_publish(self):
+        self.activate.side_effect = RuntimeError("failed enabling SSH")
+        with self.assertRaises(RuntimeError):
+            self.finish()
+        self.rollback.assert_called_once()
+        self.assertFalse((self.root / "completed/alice").exists())
+
+    def test_marker_failure_revokes_remote_access(self):
+        with patch("tenkr_workstation_setup.completion.os.replace", side_effect=OSError("disk failure")):
+            with self.assertRaises(OSError):
+                self.finish()
+        self.activate.assert_called_once()
+        self.rollback.assert_called_once()
         self.assertFalse((self.root / "completed/alice").exists())
 
     def test_password_is_required_before_interactive_verification(self):

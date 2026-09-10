@@ -5,11 +5,27 @@ from pathlib import Path
 import pwd
 import re
 import subprocess
+import stat
 import tempfile
 import uuid
 
 ROOT = Path("/var/lib/10kr-workstation-setup")
 USER_CHECKS = {"connectivity", "onepassword", "github", "keyring", "chrome"}
+
+
+def published(user, root=ROOT):
+    marker = Path(root) / "completed" / user
+    try:
+        metadata = marker.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            return False
+        for parent in marker.parents:
+            metadata = parent.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
+                return False
+        return True
+    except OSError:
+        return False
 
 
 def worker(user, display, executable, systemd_run, systemctl):
@@ -50,7 +66,8 @@ def worker(user, display, executable, systemd_run, systemctl):
                        stderr=subprocess.DEVNULL, timeout=30, check=False)
 
 
-def complete(user, verify_user, verify_system, still_authorized, root=ROOT):
+def complete(user, verify_user, verify_system, still_authorized, root=ROOT,
+             activate_network=lambda: None, rollback_network=lambda: None):
     root = Path(root)
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*", user) or user == "root":
         raise PermissionError("This account cannot enroll.")
@@ -81,12 +98,17 @@ def complete(user, verify_user, verify_system, still_authorized, root=ROOT):
             stream.write(b"1\n")
             stream.flush()
             os.fsync(stream.fileno())
+        activate_network()
         os.replace(temporary, marker)
         directory = os.open(marker.parent, os.O_DIRECTORY)
         try:
             os.fsync(directory)
         finally:
             os.close(directory)
+    except BaseException:
+        marker.unlink(missing_ok=True)
+        rollback_network()
+        raise
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

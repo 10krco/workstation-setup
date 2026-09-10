@@ -98,10 +98,10 @@ def tailscale() -> ProbeResult:
     from .network import verify
     try:
         if verify():
-            return ProbeResult(True, "Tailscale is connected with operator access and SSH enabled.")
+            return ProbeResult(True, "The work network is connected. Operator access and SSH will be enabled after final verification.")
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         pass
-    return ProbeResult(False, "Tailscale network, operator access, and SSH setup need verification.")
+    return ProbeResult(False, "Join the required work network before finishing setup.")
 
 
 def home_manager() -> ProbeResult:

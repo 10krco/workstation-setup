@@ -22,7 +22,7 @@ let
     import os, sys
     from pathlib import Path
     sys.path.insert(0, "${package}/lib/tenkr-workstation-setup")
-    from tenkr_workstation_setup.completion import complete, worker
+    from tenkr_workstation_setup.completion import complete, worker, published
     root = Path("/var/lib/10kr-workstation-setup")
     for directory in ("managed-users", "password-set", "completed"):
         (root / directory).mkdir(parents=True, exist_ok=True)
@@ -33,11 +33,13 @@ let
                          "${pkgs.systemd}/bin/systemd-run", "${pkgs.systemd}/bin/systemctl")
     assert run() == []
     assert not (root / "completed/alice").exists()
+    assert not published("alice")
     assert complete("alice", lambda: ["chrome"], lambda user: [], lambda: True) == ["chrome"]
     assert not (root / "completed/alice").exists()
     assert complete("alice", run, lambda user: [], lambda: True) == []
     assert (root / "completed/alice").stat().st_uid == 0
     assert (root / "completed/alice").read_text() == "1\n"
+    assert published("alice")
   '';
 in
 pkgs.testers.runNixOSTest {

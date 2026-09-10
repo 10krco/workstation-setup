@@ -170,6 +170,8 @@
                     send_interface="com.tenkr.WorkstationSetup" send_member="PrepareNetwork"/>
                   <allow send_destination="com.tenkr.WorkstationSetup"
                     send_interface="com.tenkr.WorkstationSetup" send_member="Complete"/>
+                  <allow send_destination="com.tenkr.WorkstationSetup"
+                    send_interface="com.tenkr.WorkstationSetup" send_member="VerifyNetwork"/>
                 </policy>
               </busconfig>
             '';
@@ -227,6 +229,9 @@
           package = self.packages.${system}.default;
         };
         polkit-vm = (pkgsFor system).callPackage ./nix/polkit-vm.nix { };
+        network-vm = (pkgsFor system).callPackage ./nix/network-vm.nix {
+          package = self.packages.${system}.default;
+        };
         module =
           let
             evaluated = nixpkgs.lib.nixosSystem {

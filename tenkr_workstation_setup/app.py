@@ -387,7 +387,7 @@ class SetupWindow(Adw.ApplicationWindow):
                               Gio.DBusCallFlags.NONE, 45000, None)
                 complete = connect_network(cancel, lambda url: GLib.idle_add(browser, url),
                                            lambda message: GLib.idle_add(progress, message))
-                message = "Tailscale is connected and SSH is enabled." if complete else "Setup canceled."
+                message = "The work network is connected. SSH and operator access will be enabled after final verification." if complete else "Setup canceled."
             except (GLib.Error, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                 message = str(error)
             GLib.idle_add(finished, message)
