@@ -17,6 +17,7 @@ from .personalization import resolve as resolve_home, activate as activate_home
 from .network import connect as connect_network
 from .github_auth import login as github_login
 from .ssh_setup import configure as configure_ssh
+from .identity import git_identity
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -149,10 +150,15 @@ class SetupWindow(Adw.ApplicationWindow):
     def _github_dialog(self):
         if self._github_busy:
             return
+        try:
+            git_name, git_email = git_identity()
+        except RuntimeError as error:
+            self._message("Work identity is missing", str(error))
+            return
         dialog = Adw.AlertDialog(heading="Connect GitHub and SSH",
-                                 body="First sign in to 1Password and enable its CLI integration and SSH agent. Choose the vault for your authentication and signing keys.")
+                                 body=f"Git identity: {git_name}\n{git_email}\n\nFirst sign in to 1Password and enable its CLI integration and SSH agent. Choose the vault for your keys.")
         group = Adw.PreferencesGroup()
-        fields = [Adw.EntryRow(title=title) for title in ("1Password vault", "Your name", "Git email address")]
+        fields = [Adw.EntryRow(title="1Password vault")]
         for field in fields:
             group.add(field)
         dialog.set_extra_child(group)
@@ -162,16 +168,16 @@ class SetupWindow(Adw.ApplicationWindow):
         def response(_dialog, choice):
             if choice != "start":
                 return
-            values = tuple(field.get_text().strip() for field in fields)
-            if not all(values):
-                self._message("Details needed", "Enter a vault, name, and email address.")
+            vault = fields[0].get_text().strip()
+            if not vault:
+                self._message("Details needed", "Enter a 1Password vault.")
                 return
-            self._github_setup(*values)
+            self._github_setup(vault)
 
         dialog.connect("response", response)
         dialog.present(self)
 
-    def _github_setup(self, vault, name, email):
+    def _github_setup(self, vault):
         self._github_busy = True
         cancel = threading.Event()
         status = Adw.AlertDialog(heading="Connect GitHub", body="Checking GitHub access…")
@@ -206,7 +212,7 @@ class SetupWindow(Adw.ApplicationWindow):
                     GLib.idle_add(done, "Sign-in canceled.")
                     return
                 GLib.idle_add(configuring)
-                configure_ssh(vault, name, email)
+                configure_ssh(vault)
                 message = "GitHub keys and Git signing are configured."
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                 message = str(error)

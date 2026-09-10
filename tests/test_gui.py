@@ -15,7 +15,9 @@ class GuiTest(unittest.TestCase):
         app = SetupApplication()
         app.register(None)
         # These are presentation tests; real credentials and hardware are never touched.
-        with patch("tenkr_workstation_setup.app.threading.Thread.start"):
+        with patch("tenkr_workstation_setup.app.threading.Thread.start"), patch(
+            "tenkr_workstation_setup.app.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co")
+        ):
             window = SetupWindow(app)
             window.present()
             for open_dialog in (window._password_dialog, window._home_dialog,

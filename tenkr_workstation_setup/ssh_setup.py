@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tomllib
+from .identity import git_identity
 
 
 def command(*args, discard=False):
@@ -49,7 +50,8 @@ def register(key, role, title):
         raise RuntimeError("GitHub did not retain the public-key registration.")
 
 
-def configure(vault, name, email, home=None):
+def configure(vault, home=None):
+    name, email = git_identity()
     if not re.fullmatch(r"[A-Za-z0-9 _.-]+", vault) or not name.strip() or "@" not in email:
         raise ValueError("Provide a vault name or ID, your name, and your Git email address.")
     signer = shutil.which("op-ssh-sign")
