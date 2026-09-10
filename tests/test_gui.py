@@ -37,6 +37,17 @@ class GuiTest(unittest.TestCase):
             start.assert_called_once()
             self.assertIs(window.get_visible_dialog(), status)
             status.force_close()
+            window._github_busy = False
+            with patch("tenkr_workstation_setup.app.github_login", return_value=True), patch(
+                "tenkr_workstation_setup.app.configure_ssh", side_effect=KeyError("login")
+            ), patch("tenkr_workstation_setup.app.threading.Thread") as thread:
+                window._github_setup("Test")
+                thread.call_args.kwargs["target"]()
+            while GLib.MainContext.default().pending():
+                GLib.MainContext.default().iteration(False)
+            self.assertFalse(window._github_busy)
+            self.assertIn("stopped unexpectedly", window.get_visible_dialog().get_body())
+            window.get_visible_dialog().force_close()
             window.close()
 
     def test_only_privileged_success_closes_setup(self):
