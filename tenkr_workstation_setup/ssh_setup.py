@@ -100,9 +100,13 @@ def verify_email(email):
 
 
 def ssh_identity_locations(home):
-    result = subprocess.run(["ssh", "-vvG", "git@github.com"], capture_output=True, text=True, timeout=5)
     paths = {str(home / ".ssh/config")}
-    paths.update(re.findall(r"Reading configuration data (.+)", result.stderr))
+    try:
+        result = subprocess.run(["ssh", "-vvG", "git@github.com"], capture_output=True,
+                                text=True, timeout=5, check=False)
+        paths.update(re.findall(r"Reading configuration data (.+)", result.stderr))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
     locations = []
     for value in sorted(paths):
         path = Path(value)
@@ -153,9 +157,9 @@ def verify_authentication(login, home):
             or [expand(value) for value in options.get("identityfile", [])] != [identity]):
         raise RuntimeError("SSH configuration does not select the workstation 1Password agent and authentication key.")
     metadata = json.loads(command("gh", "api", "meta"))
-    host_keys = metadata.get("ssh_keys", [])
-    if not host_keys or any(not re.fullmatch(r"(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+", key)
-                            for key in host_keys):
+    host_keys = [key for key in metadata.get("ssh_keys", []) if isinstance(key, str)
+                 and re.fullmatch(r"(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+", key)]
+    if not host_keys:
         raise RuntimeError("GitHub did not return recognized SSH host keys.")
     with tempfile.TemporaryDirectory(prefix="tenkr-ssh-check-") as directory:
         known_hosts = Path(directory) / "known_hosts"
@@ -202,10 +206,11 @@ def configure(vault, home=None):
     for role in ("authentication", "signing"):
         title = f"10kR GitHub {login} {role}"
         item, key = ensure_item(vault, title)
-        register(key, role, title)
         keys[role] = (item, key)
     if keys["authentication"][1] == keys["signing"][1]:
         raise RuntimeError("Authentication and signing must use different keys.")
+    for role, (_, key) in keys.items():
+        register(key, role, f"10kR GitHub {login} {role}")
     ssh = home / ".ssh"
     ssh.mkdir(mode=0o700, exist_ok=True)
     for role, (_, key) in keys.items():
