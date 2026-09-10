@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tenkr_workstation_setup.ssh_setup import ensure_item, register, verify_signing
 from tenkr_workstation_setup.ssh_setup import verify_authentication, verify_email
@@ -129,6 +129,20 @@ class SigningIntegrationTest(unittest.TestCase):
 
 
 class ConfigurationRetryTest(unittest.TestCase):
+    def test_unbounded_legacy_block_preserves_personal_configuration_by_refusing(self):
+        personal = "# 10kR 1Password SSH agent\nHost *\n  IdentityFile ~/.ssh/id_ed25519\n"
+        for suffix in ("", "\nHost work\n  HostName work.example\n"):
+            with self.assertRaises(RuntimeError):
+                managed_ssh_config(personal + suffix)
+
+    @patch("tenkr_workstation_setup.ssh_setup.subprocess.run", return_value=Mock(returncode=1))
+    def test_failure_identifies_operation_without_cli_output(self, run):
+        from tenkr_workstation_setup.ssh_setup import command
+        run.return_value.stderr = "secret must not be shown"
+        with self.assertRaisesRegex(RuntimeError, "op read failed") as error:
+            command("op", "read", "op://vault/item/password")
+        self.assertNotIn("secret", str(error.exception))
+
     def test_incomplete_managed_block_is_repaired_without_losing_personal_hosts(self):
         personal = "Host internal\n  HostName internal.example\n"
         old = "# 10kR 1Password SSH agent\nHost github.com\n\n" + personal
