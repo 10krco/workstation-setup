@@ -15,7 +15,7 @@ class GuiTest(unittest.TestCase):
         app = SetupApplication()
         app.register(None)
         # These are presentation tests; real credentials and hardware are never touched.
-        with patch("tenkr_workstation_setup.app.threading.Thread.start"), patch(
+        with patch("tenkr_workstation_setup.app.threading.Thread.start") as start, patch(
             "tenkr_workstation_setup.app.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co")
         ):
             window = SetupWindow(app)
@@ -29,4 +29,12 @@ class GuiTest(unittest.TestCase):
                 dialog.force_close()
                 while GLib.MainContext.default().pending():
                     GLib.MainContext.default().iteration(False)
+            start.reset_mock()
+            window._github_setup("Test")
+            status = window.get_visible_dialog()
+            self.assertIsNotNone(status)
+            window._github_setup("Another vault")
+            start.assert_called_once()
+            self.assertIs(window.get_visible_dialog(), status)
+            status.force_close()
             window.close()
