@@ -3,7 +3,7 @@
 This document describes the target experience. The repository is under active
 development and is not ready to enable on shipped machines. Password enrollment,
 fingerprint enrollment, remote personalization, and the session router are implemented; account and key
-creation, network enrollment, and privileged completion
+creation and privileged completion
 still require implementation and end-to-end verification.
 
 ## Scope
@@ -129,6 +129,12 @@ contains only the `op://` item reference.
 The application starts Tailscale's browser enrollment. The privileged service
 then makes the caller the local operator and enables Tailscale SSH. Completion
 requires a `Running` backend and an enabled SSH preference.
+
+The implementation sets and verifies the operator and SSH preferences before
+starting `tailscale up` with existing preferences preserved. It obtains the HTTPS
+sign-in URL from daemon status, opens the browser, and waits for login or machine
+approval. Cancellation stops waiting without logging out an existing account.
+Expected-tailnet policy and end-to-end browser acceptance remain shipping work.
 
 ### Home Manager
 

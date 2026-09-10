@@ -96,6 +96,7 @@
 
             environment.systemPackages = [ cfg.package ];
             services.fprintd.enable = true;
+            services.tailscale.enable = true;
             security.polkit.extraConfig = ''
               polkit.addRule(function(action, subject) {
                 if ((action.id == "net.reactivated.fprint.device.enroll" ||
@@ -133,6 +134,8 @@
                 <policy context="default">
                   <allow send_destination="com.tenkr.WorkstationSetup"
                     send_interface="com.tenkr.WorkstationSetup" send_member="SetPassword"/>
+                  <allow send_destination="com.tenkr.WorkstationSetup"
+                    send_interface="com.tenkr.WorkstationSetup" send_member="PrepareNetwork"/>
                 </policy>
               </busconfig>
             '';
@@ -146,6 +149,7 @@
                 "tenkr-workstation-setup-state.service"
               ];
               environment.TENKR_CHPASSWD = "${pkgs.shadow}/bin/chpasswd";
+              environment.TENKR_TAILSCALE = "${pkgs.tailscale}/bin/tailscale";
               serviceConfig = {
                 Type = "dbus";
                 BusName = "com.tenkr.WorkstationSetup";

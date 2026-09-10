@@ -9,6 +9,7 @@ from gi.repository import GLib
 import pam
 
 from .password_backend import set_password
+from .network import prepare
 
 BUS_NAME = "com.tenkr.WorkstationSetup"
 OBJECT_PATH = "/com/tenkr/WorkstationSetup"
@@ -35,6 +36,16 @@ class EnrollmentService(dbus.service.Object):
                 or values["Remote"] or str(values["Type"]) != "wayland"):
             raise PermissionError("Password setup requires your active local desktop session.")
         return pwd.getpwuid(uid).pw_name
+
+    @dbus.service.method(BUS_NAME, in_signature="", out_signature="", sender_keyword="sender")
+    def PrepareNetwork(self, sender=None):
+        try:
+            prepare(self.caller(sender), os.environ["TENKR_TAILSCALE"])
+        except (PermissionError, RuntimeError) as error:
+            raise dbus.exceptions.DBusException(str(error), name=BUS_NAME + ".Error") from None
+        except Exception:
+            raise dbus.exceptions.DBusException("Network setup failed. Please retry.",
+                                                name=BUS_NAME + ".Error") from None
 
     @dbus.service.method(BUS_NAME, in_signature="ss", out_signature="", sender_keyword="sender")
     def SetPassword(self, current, replacement, sender=None):

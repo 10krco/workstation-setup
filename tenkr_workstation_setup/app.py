@@ -14,6 +14,7 @@ from .probes import probe
 from .state import EnrollmentState, STEPS, Step
 from .fingerprint import Reader, enroll
 from .personalization import resolve as resolve_home, activate as activate_home
+from .network import connect as connect_network
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -26,6 +27,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self._probe_generation = 0
         self._fingerprint_cancel = None
         self._home_busy = False
+        self._network_cancel = None
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -114,6 +116,9 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "home-manager":
             self._home_dialog()
             return
+        if step.key == "tailscale":
+            self._network_dialog()
+            return
         actions = {
             "onepassword": ["1password"],
         }
@@ -134,6 +139,53 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _network_dialog(self):
+        if self._network_cancel is not None:
+            return
+        cancel = threading.Event()
+        self._network_cancel = cancel
+        dialog = Adw.AlertDialog(heading="Join your workstation network", body="Preparing Tailscale…")
+        link = Gtk.LinkButton(uri="https://login.tailscale.com", label="Open Tailscale sign-in")
+        link.set_sensitive(False)
+        dialog.set_extra_child(link)
+        dialog.add_response("close", "Cancel")
+        dialog.connect("response", lambda *_: cancel.set())
+        dialog.present(self)
+
+        def progress(message):
+            if not cancel.is_set():
+                dialog.set_body(message)
+            return GLib.SOURCE_REMOVE
+
+        def browser(url):
+            if not cancel.is_set():
+                link.set_uri(url)
+                link.set_sensitive(True)
+                Gio.AppInfo.launch_default_for_uri_async(url, None, None, None)
+            return GLib.SOURCE_REMOVE
+
+        def finished(message):
+            progress(message)
+            dialog.set_response_label("close", "Close")
+            self._network_cancel = None
+            self._refresh()
+            return GLib.SOURCE_REMOVE
+
+        def work():
+            try:
+                bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+                bus.call_sync("com.tenkr.WorkstationSetup", "/com/tenkr/WorkstationSetup",
+                              "com.tenkr.WorkstationSetup", "PrepareNetwork", None, None,
+                              Gio.DBusCallFlags.NONE, 45000, None)
+                complete = connect_network(cancel, lambda url: GLib.idle_add(browser, url),
+                                           lambda message: GLib.idle_add(progress, message))
+                message = "Tailscale is connected and SSH is enabled." if complete else "Setup canceled."
+            except (GLib.Error, OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                message = str(error)
+            GLib.idle_add(finished, message)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _home_dialog(self) -> None:
         if self._home_busy:

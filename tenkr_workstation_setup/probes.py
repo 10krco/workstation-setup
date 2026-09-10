@@ -80,16 +80,13 @@ def keyring() -> ProbeResult:
 
 
 def tailscale() -> ProbeResult:
-    result = _run("tailscale", "status", "--json")
-    if result is None or result.returncode != 0:
-        return ProbeResult(False, "This workstation has not joined Tailscale.")
+    from .network import verify
     try:
-        status = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return ProbeResult(False, "Tailscale returned an unreadable status.")
-    if status.get("BackendState") == "Running":
-        return ProbeResult(True, "Tailscale is connected.")
-    return ProbeResult(False, f"Tailscale is {status.get('BackendState', 'not connected')}.")
+        if verify():
+            return ProbeResult(True, "Tailscale is connected with operator access and SSH enabled.")
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+        pass
+    return ProbeResult(False, "Tailscale network, operator access, and SSH setup need verification.")
 
 
 def home_manager() -> ProbeResult:
