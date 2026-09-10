@@ -241,11 +241,17 @@ class SetupWindow(Adw.ApplicationWindow):
     def _github_setup(self, vault):
         self._github_busy = True
         cancel = threading.Event()
+        phase_lock = threading.Lock()
+        configuration_started = False
         status = Adw.AlertDialog(heading="Connect GitHub", body="Checking GitHub access…")
         link = Gtk.LinkButton(uri="https://github.com/login/device", label="Open GitHub sign-in")
         status.set_extra_child(link)
         status.add_response("close", "Cancel")
-        status.connect("response", lambda *_: cancel.set())
+        def cancel_signin(*_):
+            with phase_lock:
+                if not configuration_started:
+                    cancel.set()
+        status.connect("response", cancel_signin)
         status.present(self)
 
         def code(value):
@@ -268,11 +274,17 @@ class SetupWindow(Adw.ApplicationWindow):
             return GLib.SOURCE_REMOVE
 
         def work():
+            nonlocal configuration_started
             try:
-                if not github_login(cancel, lambda value: GLib.idle_add(code, value)) or cancel.is_set():
+                if not github_login(cancel, lambda value: GLib.idle_add(code, value)):
                     GLib.idle_add(done, "Sign-in canceled.")
                     return
-                GLib.idle_add(configuring)
+                with phase_lock:
+                    if cancel.is_set():
+                        GLib.idle_add(done, "Sign-in canceled.")
+                        return
+                    configuration_started = True
+                    GLib.idle_add(configuring)
                 configure_ssh(vault)
                 message = "GitHub keys and Git signing are configured."
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
