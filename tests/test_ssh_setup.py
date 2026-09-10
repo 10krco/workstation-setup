@@ -178,6 +178,25 @@ class ConfigurationRetryTest(unittest.TestCase):
         self.assertIn("IdentitiesOnly yes", fixed)
         self.assertTrue(fixed.endswith(personal))
         self.assertEqual(managed_ssh_config(fixed), fixed)
+
+    def test_managed_block_after_personal_stanza_is_replaced_once(self):
+        personal = "Host internal\n  HostName internal.example\n\n"
+        stale = ("# 10kR 1Password SSH agent\nHost old.example\n"
+                 "# End 10kR 1Password SSH agent\n")
+        fixed = managed_ssh_config(personal + stale)
+        self.assertTrue(fixed.startswith(personal))
+        self.assertIn("Host github.com", fixed)
+        self.assertNotIn("Host old.example", fixed)
+        self.assertEqual(fixed.count("# 10kR 1Password SSH agent"), 1)
+        self.assertEqual(managed_ssh_config(fixed), fixed)
+
+    @patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co"))
+    @patch("tenkr_workstation_setup.ssh_setup.shutil.which", return_value="/example/op-ssh-sign")
+    @patch("tenkr_workstation_setup.ssh_setup.command", return_value="{}")
+    def test_missing_github_login_is_retryable_error(self, _command, _which, _identity):
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(RuntimeError, "account name"):
+            configure("Personal", directory)
+
     @patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co"))
     @patch("tenkr_workstation_setup.ssh_setup.shutil.which", return_value="/example/op-ssh-sign")
     @patch("tenkr_workstation_setup.ssh_setup.verify_signing")

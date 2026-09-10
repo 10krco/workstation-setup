@@ -124,19 +124,31 @@ def ssh_identity_locations(home):
 def managed_ssh_config(existing):
     header = "# 10kR 1Password SSH agent\n"
     end = "# End 10kR 1Password SSH agent\n"
-    if existing.startswith(header):
-        if end in existing:
-            existing = existing.split(end, 1)[1].lstrip("\n")
-        else:
-            block, separator, rest = existing[len(header):].partition("\n\n")
+    managed_block = (header + "Host github.com\n  IdentityFile ~/.ssh/tenkr-github-authentication.pub\n"
+                     "  IdentitiesOnly yes\nHost *\n  IdentityAgent ~/.1password/agent.sock\n" + end)
+    if header in existing:
+        first = existing.index(header)
+        if end in existing[first + len(header):]:
+            # Remove every complete stale copy, then place one current block at
+            # the first copy's position without moving unrelated configuration.
+            while header in existing:
+                start = existing.index(header)
+                finish = existing.find(end, start + len(header))
+                if finish < 0:
+                    raise RuntimeError("The existing managed SSH block has no boundary. Repair its markers in ~/.ssh/config and retry.")
+                existing = existing[:start] + existing[finish + len(end):]
+            return existing[:first] + managed_block + existing[first:]
+        if first == 0:
+            legacy_block, separator, rest = existing[len(header):].partition("\n\n")
             expected = ["Host github.com", "IdentityFile ~/.ssh/tenkr-github-authentication.pub",
                         "IdentitiesOnly yes", "Host *", "IdentityAgent ~/.1password/agent.sock"]
-            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            lines = [line.strip() for line in legacy_block.splitlines() if line.strip()]
             if lines != expected[:len(lines)]:
                 raise RuntimeError("The existing managed SSH block has no boundary. Add a blank line before personal settings in ~/.ssh/config and retry.")
             existing = rest
-    return (header + "Host github.com\n  IdentityFile ~/.ssh/tenkr-github-authentication.pub\n"
-            "  IdentitiesOnly yes\nHost *\n  IdentityAgent ~/.1password/agent.sock\n" + end + "\n" + existing)
+        else:
+            raise RuntimeError("The existing managed SSH block has no boundary. Repair its markers in ~/.ssh/config and retry.")
+    return managed_block + "\n" + existing
 
 
 def verify_authentication(login, home):
@@ -200,7 +212,10 @@ def configure(vault, home=None):
     home = Path.home() if home is None else Path(home)
     receipt = home / ".config/10kr/workstation-setup/signing-verification.json"
     receipt.unlink(missing_ok=True)
-    login = json.loads(command("gh", "api", "user"))["login"]
+    account = json.loads(command("gh", "api", "user"))
+    login = account.get("login") if isinstance(account, dict) else None
+    if not isinstance(login, str) or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})", login):
+        raise RuntimeError("GitHub did not return the signed-in account name. Sign in again and retry.")
     verify_email(email)
     keys = {}
     for role in ("authentication", "signing"):
