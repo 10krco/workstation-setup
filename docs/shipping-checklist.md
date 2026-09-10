@@ -20,6 +20,11 @@ fleet's fresh-install configuration.
       optional-step policy rather than reporting success.
 - [ ] The user signs into 1Password and enables CLI integration and its SSH agent.
       The application verifies both and explains any settings that need interaction.
+- [ ] Each workstation user has a 10kR Google Workspace email in `nixos-config`.
+      Onboarding creates or selects a Chrome work profile for that exact address,
+      guides Google sign-in and Chrome sync consent, and verifies the account and
+      requested sync configuration. Workspace policies must allow Chrome Sync.
+      The app must not treat merely opening a Google sign-in page as completion.
 - [ ] Enrollment creates or reuses separate authentication and commit-signing SSH
       keys in the selected 1Password vault without exporting private keys.
 - [ ] SSH uses the 1Password agent after future logins. Git has the user's identity,

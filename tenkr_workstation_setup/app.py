@@ -15,6 +15,8 @@ from .state import EnrollmentState, STEPS, Step
 from .fingerprint import Reader, enroll
 from .personalization import resolve as resolve_home, activate as activate_home
 from .network import connect as connect_network
+from .github_auth import login as github_login
+from .ssh_setup import configure as configure_ssh
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -28,6 +30,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self._fingerprint_cancel = None
         self._home_busy = False
         self._network_cancel = None
+        self._github_busy = False
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -119,6 +122,9 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "tailscale":
             self._network_dialog()
             return
+        if step.key == "github":
+            self._github_dialog()
+            return
         actions = {
             "onepassword": ["1password"],
         }
@@ -139,6 +145,74 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _github_dialog(self):
+        if self._github_busy:
+            return
+        dialog = Adw.AlertDialog(heading="Connect GitHub and SSH",
+                                 body="First sign in to 1Password and enable its CLI integration and SSH agent. Choose the vault for your authentication and signing keys.")
+        group = Adw.PreferencesGroup()
+        fields = [Adw.EntryRow(title=title) for title in ("1Password vault", "Your name", "Git email address")]
+        for field in fields:
+            group.add(field)
+        dialog.set_extra_child(group)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("start", "Connect and configure")
+
+        def response(_dialog, choice):
+            if choice != "start":
+                return
+            values = tuple(field.get_text().strip() for field in fields)
+            if not all(values):
+                self._message("Details needed", "Enter a vault, name, and email address.")
+                return
+            self._github_setup(*values)
+
+        dialog.connect("response", response)
+        dialog.present(self)
+
+    def _github_setup(self, vault, name, email):
+        self._github_busy = True
+        cancel = threading.Event()
+        status = Adw.AlertDialog(heading="Connect GitHub", body="Checking GitHub access…")
+        link = Gtk.LinkButton(uri="https://github.com/login/device", label="Open GitHub sign-in")
+        status.set_extra_child(link)
+        status.add_response("close", "Cancel")
+        status.connect("response", lambda *_: cancel.set())
+        status.present(self)
+
+        def code(value):
+            if not cancel.is_set():
+                status.set_body(f"Enter this code at GitHub and authorize workstation setup:\n\n{value}")
+                Gio.AppInfo.launch_default_for_uri_async("https://github.com/login/device", None, None, None)
+            return GLib.SOURCE_REMOVE
+
+        def configuring():
+            status.set_body("Configuring 1Password keys, GitHub registrations, and Git signing. Closing this dialog does not cancel these operations.")
+            status.set_response_label("close", "Close")
+            return GLib.SOURCE_REMOVE
+
+        def done(message):
+            self._github_busy = False
+            if not cancel.is_set():
+                status.set_body(message)
+                status.set_response_label("close", "Close")
+            self._refresh()
+            return GLib.SOURCE_REMOVE
+
+        def work():
+            try:
+                if not github_login(cancel, lambda value: GLib.idle_add(code, value)) or cancel.is_set():
+                    GLib.idle_add(done, "Sign-in canceled.")
+                    return
+                GLib.idle_add(configuring)
+                configure_ssh(vault, name, email)
+                message = "GitHub keys and Git signing are configured."
+            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                message = str(error)
+            GLib.idle_add(done, message)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _network_dialog(self):
         if self._network_cancel is not None:
