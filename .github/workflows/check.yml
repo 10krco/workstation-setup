@@ -25,6 +25,6 @@ jobs:
       - name: Test
         run: nix develop --command python -m unittest discover -s tests
       - name: Exercise GUI dialogs
-        run: nix develop --command dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo TENKR_GUI_TEST=1 python -m unittest discover -s tests -p test_gui.py -v
+        run: nix develop --command bash -c 'dbus-run-session --config-file="$DBUS_SESSION_CONFIG" -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo TENKR_GUI_TEST=1 python -m unittest discover -s tests -p test_gui.py -v'
       - name: Build
         run: nix flake check --no-update-lock-file
