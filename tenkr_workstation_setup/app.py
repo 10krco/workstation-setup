@@ -263,6 +263,8 @@ class SetupWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _github_setup(self, vault):
+        if self._github_busy:
+            return
         self._github_busy = True
         cancel = threading.Event()
         phase_lock = threading.Lock()
