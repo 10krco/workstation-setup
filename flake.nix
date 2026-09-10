@@ -127,8 +127,8 @@
             };
             normalSessionCommand = lib.mkOption {
               type = lib.types.str;
-              default = "${pkgs.gnome-session}/bin/gnome-session";
-              defaultText = lib.literalExpression ''"''${pkgs.gnome-session}/bin/gnome-session"'';
+              default = "${pkgs.coreutils}/bin/env XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome ${pkgs.gnome-session}/bin/gnome-session";
+              defaultText = lib.literalExpression ''"''${pkgs.coreutils}/bin/env XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome ''${pkgs.gnome-session}/bin/gnome-session"'';
               description = "Command started after the managed user completes enrollment.";
             };
           };

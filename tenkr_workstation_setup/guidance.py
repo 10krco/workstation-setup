@@ -45,3 +45,4 @@ class GuidanceWindow(Gtk.Window):
         button.connect("clicked", lambda *_: on_return())
         box.append(button)
         self.set_child(box)
+        self.set_focus(button)

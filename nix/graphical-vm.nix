@@ -31,7 +31,7 @@ pkgs.testers.runNixOSTest {
         ];
     }
   );
-  nodes.machine = {
+  nodes.machine = { pkgs, ... }: {
     imports = [ module ];
     virtualisation.memorySize = 4096;
     virtualisation.cores = 2;
@@ -42,6 +42,13 @@ pkgs.testers.runNixOSTest {
       user = userName;
     };
     services.desktopManager.gnome.enable = true;
+    # The virtual GPU has no accelerated EGL context. Keep the real app and
+    # authentication integrations, but use Electron's software renderer here.
+    programs._1password-gui.package = pkgs._1password-gui.overrideAttrs (old: {
+      preFixup = old.preFixup + ''
+        wrapProgram "$out/bin/1password" --add-flags "--disable-gpu --ozone-platform=wayland"
+      '';
+    });
     users.users.${userName} = {
       isNormalUser = true;
       uid = 1000;
@@ -104,5 +111,38 @@ pkgs.testers.runNixOSTest {
     machine.succeed("${pamPython}/bin/python ${checkPassword}")
     machine.succeed("journalctl -b -u display-manager --no-pager")
     machine.fail("test -e /var/lib/10kr-workstation-setup/completed/${userName}")
+    machine.wait_for_text("Your personal login password is set", timeout=30)
+    machine.wait_for_text("not required", timeout=30)
+    click(875, 358)
+    machine.wait_for_text("A guide stays beside", timeout=30)
+    machine.screenshot("onepassword-instructions")
+    click(640, 468)
+    machine.wait_for_text("Return to setup and check", timeout=45)
+    machine.wait_for_text("Create New Account", timeout=60)
+    machine.screenshot("external-app-guide")
+    machine.fail("test -e /home/${userName}/.config/10kr/workstation-setup/onepassword.complete")
+    click(1110, 760)
+    machine.wait_for_text("First-login checklist", timeout=30)
+    machine.fail("test -e /var/lib/10kr-workstation-setup/completed/${userName}")
+    # Closing setup cannot start the desktop. The chosen password and pending
+    # enrollment survive another ordinary login.
+    click(1256, 48)
+    machine.wait_for_text("Not listed", timeout=90)
+    machine.fail("pgrep -u ${userName} -f '[/]gnome-shell(-wrapped)?$'")
+    machine.send_key("ret")
+    machine.wait_for_text("${userName}", timeout=30)
+    machine.send_chars("replacement-test-password")
+    machine.send_key("ret")
+    machine.wait_for_text("First-login checklist", timeout=90)
+    machine.wait_for_text("Your personal login password is set", timeout=30)
+
+    # Exercise only the session router's completed transition here. Privileged
+    # completion and rejection are independently tested in completion-vm; this
+    # root-created fixture is not evidence of real account enrollment.
+    machine.succeed("touch /var/lib/10kr-workstation-setup/completed/${userName}")
+    click(1256, 48)
+    machine.wait_until_succeeds("setpriv --reuid=1000 --regid=100 --init-groups env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus busctl --user status org.gnome.Shell", timeout=90)
+    machine.wait_for_text("Activities", timeout=90)
+    machine.screenshot("completed-desktop")
   '';
 }
