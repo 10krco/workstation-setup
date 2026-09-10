@@ -42,6 +42,7 @@ pkgs.testers.runNixOSTest {
       user = userName;
     };
     services.desktopManager.gnome.enable = true;
+    environment.sessionVariables.GSK_RENDERER = "cairo";
     # The virtual GPU has no accelerated EGL context. Keep the real app and
     # authentication integrations, but use Electron's software renderer here.
     programs._1password-gui.package = pkgs._1password-gui.overrideAttrs (old: {
@@ -142,7 +143,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("touch /var/lib/10kr-workstation-setup/completed/${userName}")
     click(1256, 48)
     machine.wait_until_succeeds("setpriv --reuid=1000 --regid=100 --init-groups env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus busctl --user status org.gnome.Shell", timeout=90)
-    machine.wait_for_text("Activities", timeout=90)
+    machine.wait_for_text("Take Tour|Type to search", timeout=90)
     machine.screenshot("completed-desktop")
   '';
 }
