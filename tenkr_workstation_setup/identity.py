@@ -6,8 +6,8 @@ import pwd
 
 
 def git_identity(path=Path("/etc/10kr/workstation-users.json")):
-    username = pwd.getpwuid(os.getuid()).pw_name
     try:
+        username = pwd.getpwuid(os.getuid()).pw_name
         identity = json.loads(path.read_text())[username]
         full_name, title, email = (identity.get(key) for key in ("fullName", "title", "workEmail"))
         if not all(isinstance(value, str) and value.strip() for value in (full_name, title, email)):
