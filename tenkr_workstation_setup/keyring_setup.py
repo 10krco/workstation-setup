@@ -103,13 +103,15 @@ def enroll(vault, current):
     verification.unlink(missing_ok=True)
     reference = ensure_reference(vault)
     replacement = read_password(reference)
-    bus = dbus.SessionBus(private=True)
+    bus = None
     try:
+        bus = dbus.SessionBus(private=True)
         migrate(bus, replacement, current.encode())
     except dbus.DBusException:
         raise RuntimeError("The keyring could not be enrolled. Check its current password and retry; existing secrets have not been deleted.") from None
     finally:
-        bus.close()
+        if bus is not None:
+            bus.close()
     write_config(Path.home() / REFERENCE, reference + "\n")
     result = subprocess.run(["systemctl", "--user", "start", "tenkr-onepassword.service",
                              "tenkr-gnome-keyring-unlock.service"],

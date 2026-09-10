@@ -12,6 +12,17 @@ from tenkr_workstation_setup.keyring_setup import ensure_reference, migrate, SER
 
 
 class KeyringReferenceTest(unittest.TestCase):
+    def test_unavailable_session_bus_returns_a_retryable_error_without_a_receipt(self):
+        from tenkr_workstation_setup.keyring_setup import enroll
+        with tempfile.TemporaryDirectory() as home, \
+             patch.object(Path, "home", return_value=Path(home)), \
+             patch("tenkr_workstation_setup.keyring_setup.ensure_reference", return_value="op://Test/item/password"), \
+             patch("tenkr_workstation_setup.keyring_setup.read_password", return_value=b"fixture-password"), \
+             patch("tenkr_workstation_setup.keyring_setup.dbus.SessionBus", side_effect=dbus.DBusException("unavailable")):
+            with self.assertRaisesRegex(RuntimeError, "retry"):
+                enroll("Test", "")
+            self.assertFalse((Path(home) / ".config/10kr/workstation-setup/keyring-verification.json").exists())
+
     @patch("tenkr_workstation_setup.keyring_setup.command")
     def test_creation_output_is_discarded_and_retry_reuses_item(self, command):
         with tempfile.TemporaryDirectory() as home:

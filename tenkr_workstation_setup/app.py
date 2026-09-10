@@ -220,7 +220,7 @@ class SetupWindow(Adw.ApplicationWindow):
         if self._keyring_busy:
             return
         dialog = Adw.AlertDialog(heading="Protect application secrets",
-            body="Keep 1Password unlocked. Setup stores a random keyring password there and creates an encrypted login keyring. If a login keyring already exists, enter its current password to preserve its contents. Leave that field empty for a new keyring.")
+            body="Keep 1Password unlocked. Setup stores a random keyring password there and creates an encrypted login keyring. If a login keyring already exists, enter its current password to preserve its contents. This may still be the supplied initial login password, even after you changed your account password. Leave that field empty for a new keyring.")
         group = Adw.PreferencesGroup()
         vault = Adw.EntryRow(title="1Password vault")
         current = Adw.PasswordEntryRow(title="Current keyring password, if one exists")
