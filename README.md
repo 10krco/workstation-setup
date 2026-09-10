@@ -39,3 +39,10 @@ authentication tags for the SSH-agent and CLI switches; setup does not rewrite
 these internal settings. The checklist requires a live SSH-agent response and a
 successful desktop CLI request, discarding all CLI output. Enabling a preference
 or merely creating an agent socket does not mark the step complete.
+
+The default module also installs the daily 1Password/keyring user services needed
+by the application-secrets step. For workstations that only need that integration,
+import `nixosModules.keyring` and enable `services.tenkr-keyring.enable`; configure
+`programs._1password-gui.polkitPolicyOwners` for their users. The services start
+only for users with an enrolled secret-reference file. Passwords pass directly
+from the system CLI wrapper to GNOME Keyring through a pipe.

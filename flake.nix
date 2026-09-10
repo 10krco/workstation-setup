@@ -15,6 +15,8 @@
         default = (pkgsFor system).callPackage ./nix/package.nix { };
       });
 
+      nixosModules.keyring = import ./nix/keyring.nix;
+
       nixosModules.default =
         {
           config,
@@ -108,6 +110,7 @@
         in
         {
           imports = [
+            ./nix/keyring.nix
             ./nix/login-gate.nix
             ./nix/enrollment-polkit.nix
           ];
@@ -175,6 +178,7 @@
               polkitPolicyOwners = cfg.managedUsers;
             };
             services.fprintd.enable = true;
+            services.tenkr-keyring.enable = true;
             services.tailscale.enable = true;
             networking.networkmanager.enable = true;
             security.polkit.extraConfig = ''
@@ -282,6 +286,10 @@
         };
 
       checks = forAllSystems (system: {
+        keyring-runtime = import ./nix/keyring-runtime-check.nix {
+          pkgs = pkgsFor system;
+          source = self;
+        };
         package = self.packages.${system}.default;
         password-vm = (pkgsFor system).callPackage ./nix/password-vm.nix {
           package = self.packages.${system}.default;
@@ -345,6 +353,10 @@
               "su-l"
             ];
           assert evaluatedConfig.programs._1password.enable;
+          assert evaluatedConfig.services.tenkr-keyring.enable;
+          assert evaluatedConfig.services.gnome.gnome-keyring.enable;
+          assert builtins.elem "graphical-session.target"
+            evaluatedConfig.systemd.user.services.tenkr-gnome-keyring-unlock.wantedBy;
           assert evaluatedConfig.programs._1password-gui.enable;
           assert evaluatedConfig.programs._1password-gui.polkitPolicyOwners == [ "alice" ];
           assert evaluatedConfig.security.wrappers.op.setgid;

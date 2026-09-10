@@ -71,6 +71,16 @@ class KeyringRuntimeTest(unittest.TestCase):
             reference = Path.home() / ".config/10kr/gnome-keyring-1password-secret-reference"
             reference.parent.mkdir(parents=True, exist_ok=True)
             reference.write_text("op://Test/item/password\n")
+            unlock_helper = os.environ.get("TENKR_KEYRING_UNLOCK_TEST")
+            if unlock_helper:
+                service.Lock([dbus.ObjectPath(first)], timeout=10)
+                result = subprocess.run([unlock_helper], capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(props.Get("org.freedesktop.Secret.Collection", "Locked", timeout=10))
+                self.assertNotIn("replacement-test-password", result.stdout + result.stderr)
+                # Already-unlocked sessions must not trigger another CLI prompt.
+                subprocess.run([unlock_helper], capture_output=True, check=True, timeout=30)
+                self.assertEqual((Path.home() / "op-calls").read_text(), "x")
             with patch.object(verification.keyring_setup, "read_password", return_value=b"wrong-password"), \
                  patch.object(verification.ssh_setup, "command") as command:
                 with self.assertRaises(dbus.DBusException):
@@ -97,7 +107,12 @@ class KeyringRuntimeTest(unittest.TestCase):
                 self.fail("Keyring daemon did not restart")
             props = dbus.Interface(bus.get_object(SERVICE, first), "org.freedesktop.DBus.Properties")
             self.assertTrue(props.Get("org.freedesktop.Secret.Collection", "Locked", timeout=10))
-            self.assertEqual(migrate(bus, b"replacement-test-password"), first)
+            if unlock_helper:
+                subprocess.run([unlock_helper], capture_output=True, check=True, timeout=30)
+                self.assertFalse(props.Get("org.freedesktop.Secret.Collection", "Locked", timeout=10))
+                self.assertEqual((Path.home() / "op-calls").read_text(), "xx")
+            else:
+                self.assertEqual(migrate(bus, b"replacement-test-password"), first)
         finally:
             if bus is not None:
                 bus.close()
