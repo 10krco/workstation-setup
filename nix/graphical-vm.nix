@@ -2,6 +2,7 @@
   pkgs,
   module,
   userName ? "alice",
+  loginLabel ? userName,
   fullName ? "Alice Example",
   title ? "Engineer",
   workEmail ? "alice@example.com",
@@ -90,7 +91,7 @@ pkgs.testers.runNixOSTest {
       machine.send_key("ret")
       # The large account label identifies the password page; its faint
       # password placeholder is not reliably recognized by OCR.
-      machine.wait_for_text("${userName}", timeout=30)
+      machine.wait_for_text("${loginLabel}", timeout=30)
       machine.send_chars("initial-test-password")
       machine.send_key("ret")
     ''}
@@ -136,7 +137,7 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_text("Not listed", timeout=90)
     machine.fail("pgrep -u ${userName} -f '[/]gnome-shell(-wrapped)?$'")
     machine.send_key("ret")
-    machine.wait_for_text("${userName}", timeout=30)
+    machine.wait_for_text("${loginLabel}", timeout=30)
     machine.send_chars("replacement-test-password")
     machine.send_key("ret")
     machine.wait_for_text("First-login checklist", timeout=90)
