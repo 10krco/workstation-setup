@@ -13,7 +13,7 @@ import pam
 from .password_backend import set_password
 from .network import prepare
 from .network import verify_enrollment, enable_remote, restrict
-from .completion import complete, worker, published
+from .completion import complete, worker, published, recover
 
 BUS_NAME = "com.tenkr.WorkstationSetup"
 OBJECT_PATH = "/com/tenkr/WorkstationSetup"
@@ -24,6 +24,17 @@ class EnrollmentService(dbus.service.Object):
         self.bus = bus
         self.name = dbus.service.BusName(BUS_NAME, bus=bus)
         super().__init__(self.name, OBJECT_PATH)
+
+    def recover_pending(self):
+        for user in json.loads(os.environ["TENKR_MANAGED_USERS"]):
+            try:
+                recover(user, self.system_checks,
+                        lambda: enable_remote(user, os.environ["TENKR_TAILSCALE"]),
+                        lambda: restrict(os.environ["TENKR_TAILSCALE"]))
+            except Exception:
+                # Leave the durable journal for a later retry. No secrets or
+                # raw subprocess output go to the service journal.
+                print("Pending enrollment recovery needs a retry.", flush=True)
 
     def caller(self, sender):
         daemon = dbus.Interface(self.bus.get_object(
@@ -134,4 +145,5 @@ class EnrollmentService(dbus.service.Object):
 def main():
     DBusGMainLoop(set_as_default=True)
     service = EnrollmentService(dbus.SystemBus())
+    service.recover_pending()
     GLib.MainLoop().run()

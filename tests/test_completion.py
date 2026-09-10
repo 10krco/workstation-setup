@@ -1,4 +1,5 @@
 import tempfile
+import os
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -46,11 +47,23 @@ class CompletionTest(unittest.TestCase):
         self.assertFalse((self.root / "completed/alice").exists())
 
     def test_marker_failure_revokes_remote_access(self):
-        with patch("tenkr_workstation_setup.completion.os.replace", side_effect=OSError("disk failure")):
+        replace = os.replace
+        def fail_completion(source, destination):
+            if Path(destination).parent.name == "completed":
+                raise OSError("disk failure")
+            return replace(source, destination)
+        with patch("tenkr_workstation_setup.completion.os.replace", side_effect=fail_completion):
             with self.assertRaises(OSError):
                 self.finish()
         self.activate.assert_called_once()
         self.rollback.assert_called_once()
+        self.assertFalse((self.root / "completed/alice").exists())
+
+    def test_journal_failure_never_enables_remote_access(self):
+        with patch("tenkr_workstation_setup.completion.os.replace", side_effect=OSError("disk failure")):
+            with self.assertRaises(OSError):
+                self.finish()
+        self.activate.assert_not_called()
         self.assertFalse((self.root / "completed/alice").exists())
 
     def test_password_is_required_before_interactive_verification(self):

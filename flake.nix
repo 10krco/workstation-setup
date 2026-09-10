@@ -149,6 +149,7 @@
               "d ${stateDirectory} 0755 root root -"
               "d ${stateDirectory}/completed 0755 root root -"
               "d ${stateDirectory}/password-set 0755 root root -"
+              "d ${stateDirectory}/verified 0755 root root -"
             ];
 
             security.pam.services.tenkr-workstation-setup.text = ''
@@ -182,6 +183,7 @@
               requires = [ "tenkr-workstation-setup-state.service" ];
               after = [
                 "dbus.service"
+                "tailscaled.service"
                 "tenkr-workstation-setup-state.service"
               ];
               environment.TENKR_CHPASSWD = "${pkgs.shadow}/bin/chpasswd";
@@ -199,6 +201,9 @@
                 PrivateTmp = true;
                 ProtectHome = true;
                 LimitCORE = 0;
+                Restart = "on-failure";
+                RestartSec = 5;
+                TimeoutStartSec = 30 + 60 * builtins.length cfg.managedUsers;
               };
             };
 
@@ -230,6 +235,9 @@
         };
         polkit-vm = (pkgsFor system).callPackage ./nix/polkit-vm.nix { };
         network-vm = (pkgsFor system).callPackage ./nix/network-vm.nix {
+          package = self.packages.${system}.default;
+        };
+        recovery-vm = (pkgsFor system).callPackage ./nix/recovery-vm.nix {
           package = self.packages.${system}.default;
         };
         module =

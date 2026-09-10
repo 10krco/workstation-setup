@@ -13,17 +13,15 @@ tailnet and the restricted preferences for the GUI's network step.
 
 Only after all required account checks and the final active-session/system checks
 succeed does privileged completion enable and verify operator access and SSH.
-The completion record is prepared and synced before enabling remote access, then
-atomically published. An enablement or publication error revokes remote access
+The verification journal is synced before enabling remote access, then the
+completion record is atomically published. An enablement or publication error revokes remote access
 and removes completion. A lost successful reply can be retried using the already
 published protected root record.
 
 This assumes a fresh image starts without a preexisting connected Tailscale state.
-It is not a migration that instantly revokes existing remote sessions. Abrupt
-process termination between enabling remote access and publishing completion
-still needs recovery/boot integration testing. All account checks have passed
-before that transition, but its interrupted-state behavior is not yet a verified
-shipping guarantee.
+It is not a migration that instantly revokes existing remote sessions.
+Interrupted publication and boot recovery are tested with hard power failures;
+see `enrollment-recovery.md` for the journal and recovery policy.
 
 The real Tailscale VM checks that an unprivileged user can read status but cannot
 enable SSH or grant themselves operator access, that explicit root enablement

@@ -13,8 +13,8 @@ ROOT = Path("/var/lib/10kr-workstation-setup")
 USER_CHECKS = {"connectivity", "onepassword", "github", "keyring", "chrome"}
 
 
-def published(user, root=ROOT):
-    marker = Path(root) / "completed" / user
+def protected_record(user, kind, root=ROOT):
+    marker = Path(root) / kind / user
     try:
         metadata = marker.lstat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022:
@@ -26,6 +26,62 @@ def published(user, root=ROOT):
         return True
     except OSError:
         return False
+
+
+def published(user, root=ROOT):
+    return protected_record(user, "completed", root)
+
+
+def record(user, kind, root=ROOT):
+    marker = Path(root) / kind / user
+    marker.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=marker.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            os.fchmod(stream.fileno(), 0o644)
+            stream.write(b"1\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, marker)
+        for parent in (marker.parent, marker.parent.parent):
+            directory = os.open(parent, os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def finish_network(user, activate_network, rollback_network, root=ROOT):
+    try:
+        activate_network()
+        record(user, "completed", root)
+    except BaseException:
+        (Path(root) / "completed" / user).unlink(missing_ok=True)
+        rollback_network()
+        raise
+
+
+def recover(user, verify_system, activate_network, rollback_network, root=ROOT):
+    if published(user, root):
+        # A power failure can persist our record before tailscaled's own state.
+        # Reassert the already-authorized preferences without repeating account
+        # authorization or revoking an enrolled user's desktop access.
+        activate_network()
+        return True
+    if not protected_record(user, "verified", root):
+        return False
+    if (not protected_record(user, "managed-users", root)
+            or not protected_record(user, "password-set", root)):
+        return False
+    rollback_network()
+    if verify_system(user):
+        return False
+    finish_network(user, activate_network, rollback_network, root)
+    return True
 
 
 def worker(user, display, executable, systemd_run, systemctl):
@@ -46,6 +102,8 @@ def worker(user, display, executable, systemd_run, systemctl):
     args = [systemd_run, "--quiet", "--wait", "--pipe", "--collect", "--service-type=exec",
             f"--unit={unit}", f"--property=User={user}", f"--property=Group={account.pw_gid}",
             "--property=RuntimeMaxSec=900", "--property=TimeoutStopSec=10",
+            "--property=BindsTo=tenkr-workstation-setup.service",
+            "--property=After=tenkr-workstation-setup.service",
             "--property=KillMode=control-group", "--property=UMask=0077", "--property=LimitCORE=0",
             f"--property=WorkingDirectory={account.pw_dir}"]
     args += [f"--setenv={key}={value}" for key, value in environment.items()]
@@ -78,9 +136,10 @@ def complete(user, verify_user, verify_system, still_authorized, root=ROOT,
     missing = verify_system(user)
     if missing:
         return missing
-    missing = verify_user()
-    if missing:
-        return missing
+    if not protected_record(user, "verified", root):
+        missing = verify_user()
+        if missing:
+            return missing
     # Session authorization and root-controlled checks must still hold after
     # interactive checks, which may have taken several minutes.
     if not still_authorized():
@@ -88,28 +147,8 @@ def complete(user, verify_user, verify_system, still_authorized, root=ROOT,
     missing = verify_system(user)
     if missing:
         return missing
-    marker = root / "completed" / user
-    marker.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=marker.parent, delete=False) as stream:
-            temporary = Path(stream.name)
-            os.fchmod(stream.fileno(), 0o644)
-            stream.write(b"1\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        activate_network()
-        os.replace(temporary, marker)
-        directory = os.open(marker.parent, os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    except BaseException:
-        marker.unlink(missing_ok=True)
-        rollback_network()
-        raise
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    # This durable journal commits the successful account verification before
+    # remote access can change. Recovery never substitutes a user-owned receipt.
+    record(user, "verified", root)
+    finish_network(user, activate_network, rollback_network, root)
     return []
