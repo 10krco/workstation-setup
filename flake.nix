@@ -65,7 +65,10 @@
           };
         in
         {
-          imports = [ ./nix/login-gate.nix ];
+          imports = [
+            ./nix/login-gate.nix
+            ./nix/enrollment-polkit.nix
+          ];
           options.services.tenkr-workstation-setup = {
             enable = lib.mkEnableOption "10kR first-login workstation setup";
             package = lib.mkPackageOption self.packages.${pkgs.stdenv.hostPlatform.system} "default" { };
@@ -223,6 +226,7 @@
         completion-vm = (pkgsFor system).callPackage ./nix/completion-vm.nix {
           package = self.packages.${system}.default;
         };
+        polkit-vm = (pkgsFor system).callPackage ./nix/polkit-vm.nix { };
         module =
           let
             evaluated = nixpkgs.lib.nixosSystem {
