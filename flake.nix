@@ -95,9 +95,13 @@
                 WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE NIXOS_OZONE_WL
               ${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1 &
               agent=$!
+              # GNOME Shell normally supplies this agent. The setup compositor
+              # needs its own so secured Wi-Fi networks can request passwords.
+              ${pkgs.networkmanagerapplet}/bin/nm-applet --indicator &
+              network_agent=$!
               cleanup() {
-                kill "$agent" 2>/dev/null || true
-                wait "$agent" 2>/dev/null || true
+                kill "$agent" "$network_agent" 2>/dev/null || true
+                wait "$agent" "$network_agent" 2>/dev/null || true
                 # The next desktop publishes its own compositor environment.
                 dbus-update-activation-environment WAYLAND_DISPLAY= DISPLAY= || true
                 systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY || true
@@ -304,6 +308,9 @@
         };
         recovery-vm = (pkgsFor system).callPackage ./nix/recovery-vm.nix {
           package = self.packages.${system}.default;
+        };
+        wifi-vm = (pkgsFor system).callPackage ./nix/wifi-vm.nix {
+          module = self.nixosModules.default;
         };
         graphical-vm = (pkgsFor system).callPackage ./nix/graphical-vm.nix {
           module = self.nixosModules.default;
