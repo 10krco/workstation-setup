@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import os
 import resource
@@ -30,6 +31,9 @@ from .chrome_pipe import ChromePipe
 from .chrome_setup import profile_path, record as record_chrome
 from .keyring_setup import enroll as enroll_keyring
 from .guidance import GuidanceWindow
+
+
+logger = logging.getLogger(__name__)
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -417,6 +421,11 @@ class SetupWindow(Adw.ApplicationWindow):
                 message = "GitHub keys and Git signing are configured."
             except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                 message = str(error)
+            except Exception as error:
+                # Exception values from credential tools may contain sensitive
+                # output, so retain only the type in system logs.
+                logger.error("Unexpected GitHub setup failure: %s", type(error).__name__)
+                message = "GitHub setup stopped unexpectedly. Retry; if it repeats, contact 10kR support."
             GLib.idle_add(done, message)
 
         threading.Thread(target=work, daemon=True).start()
