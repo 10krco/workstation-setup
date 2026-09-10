@@ -234,7 +234,7 @@
 
       devShells = forAllSystems (system: {
         default = (pkgsFor system).mkShell {
-          DBUS_SESSION_CONFIG = "${(pkgsFor system).dbus}/share/dbus-1/session.conf";
+          DBUS_SESSION_CONFIG = "${self}/tests/session-bus.conf";
           inputsFrom = [ self.packages.${system}.default ];
           packages = with pkgsFor system; [
             git

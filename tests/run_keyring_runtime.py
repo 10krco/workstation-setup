@@ -9,10 +9,7 @@ with tempfile.TemporaryDirectory(prefix="tenkr-keyring-test-") as directory:
     root = Path(directory)
     runtime = root / "runtime"
     runtime.mkdir(mode=0o700)
-    config = root / "bus.conf"
-    config.write_text('''<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen>
-<auth>EXTERNAL</auth><policy context="default"><allow send_destination="*"/><allow receive_sender="*"/>
-<allow own="*"/></policy></busconfig>''')
+    config = Path(__file__).with_name("session-bus.conf").resolve()
     environment = dict(os.environ, HOME=directory, XDG_CONFIG_HOME=str(root / "config"),
                        XDG_DATA_HOME=str(root / "data"), XDG_RUNTIME_DIR=str(runtime),
                        TENKR_KEYRING_TEST="1")
