@@ -8,6 +8,11 @@ from tenkr_workstation_setup.identity import git_identity
 
 
 class IdentityTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.identity.pwd.getpwuid", side_effect=KeyError("missing user"))
+    def test_missing_passwd_entry_has_a_user_facing_error(self, _pwd):
+        with self.assertRaises(RuntimeError):
+            git_identity()
+
     @patch("tenkr_workstation_setup.identity.pwd.getpwuid", return_value=Mock(pw_name="alice"))
     def test_name_title_and_work_email_come_from_fleet(self, _pwd):
         with tempfile.TemporaryDirectory() as directory:
