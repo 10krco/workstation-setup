@@ -60,7 +60,21 @@ fleet's fresh-install configuration.
 
 ## Evidence so far
 
-The password backend has unit coverage for incorrect credentials, unconfigured
-accounts, invalid input, command failure, repeat changes, and caller-session
-authorization. Its VM check exercises real PAM and password persistence. These
-checks do not yet prove the complete graphical enrollment flow or its login gate.
+The password VM check exercises real PAM, rejects the old password after a GUI
+change, and verifies persistence. Dedicated login-gate, completion, Polkit,
+Tailscale-boundary, and recovery VM checks exercise the privileged enrollment
+boundary and recovery paths. These use disposable accounts and controlled
+fixtures; they do not prove enrollment with live third-party accounts.
+
+The visible disposable VM has exercised the real 1Password welcome screen with
+a persistent right-side guide, including fullscreen behavior and returning to
+setup. Missing CLI integration or an unresponsive SSH agent leaves 1Password
+incomplete. Successful fingerprint enumeration with no devices makes fingerprint
+enrollment optional; enumeration errors still block it. Isolated GUI and probe
+tests cover these decisions.
+
+A separate authenticated acceptance VM is preserved for the user's remaining
+account-consent steps. Do not capture vault screens or secret-bearing output from
+that VM. Full Workspace sync, real key registration/signing, the intended tailnet,
+and the target T14 fingerprint reader still require acceptance evidence. No test
+completion fixture may be represented as successful real account enrollment.
