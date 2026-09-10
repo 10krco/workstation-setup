@@ -35,6 +35,9 @@ stdenvNoCC.mkDerivation {
   ];
 
   preFixup = ''
+    # NixOS supplies op's security wrapper and the GUI's op-ssh-sign through
+    # the enabled 1Password modules. Preserve those wrappers for desktop IPC.
+    gappsWrapperArgs+=(--suffix PATH : /run/wrappers/bin:/run/current-system/sw/bin)
     gappsWrapperArgs+=(--prefix PATH : ${
       lib.makeBinPath [
         git
