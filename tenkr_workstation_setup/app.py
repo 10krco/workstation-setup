@@ -13,6 +13,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 from .probes import probe
 from .state import EnrollmentState, STEPS, Step
 from .fingerprint import Reader, enroll
+from .personalization import resolve as resolve_home, activate as activate_home
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -24,6 +25,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self.rows: dict[str, Adw.ActionRow] = {}
         self._probe_generation = 0
         self._fingerprint_cancel = None
+        self._home_busy = False
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -109,6 +111,9 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "fingerprint":
             self._fingerprint_dialog()
             return
+        if step.key == "home-manager":
+            self._home_dialog()
+            return
         actions = {
             "onepassword": ["1password"],
         }
@@ -129,6 +134,69 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _home_dialog(self) -> None:
+        if self._home_busy:
+            self._message("Home Manager is busy", "Wait for the current configuration operation to finish.")
+            return
+        dialog = Adw.AlertDialog(heading="Personalize your environment",
+                                 body="Optional: use your Home Manager configuration from GitHub. Only select a repository you trust.")
+        entry = Adw.EntryRow(title="github:OWNER/REPOSITORY#OUTPUT")
+        group = Adw.PreferencesGroup()
+        group.add(entry)
+        dialog.set_extra_child(group)
+        dialog.add_response("skip", "Skip")
+        dialog.add_response("preview", "Review configuration")
+
+        def response(_dialog, choice):
+            if choice == "preview":
+                value = entry.get_text()
+                self._home_operation(lambda: resolve_home(value), self._home_preview,
+                                     "Preparing your configuration. This may take a few minutes.")
+
+        dialog.connect("response", response)
+        dialog.present(self)
+
+    def _home_operation(self, operation, success, message):
+        if self._home_busy:
+            return
+        self._home_busy = True
+        status = Adw.AlertDialog(heading="Home Manager", body=message)
+        status.add_response("close", "Close")
+        status.present(self)
+
+        def finish(result, error):
+            self._home_busy = False
+            status.close()
+            if error:
+                self._message("Configuration not applied", error)
+            else:
+                success(result)
+            return GLib.SOURCE_REMOVE
+
+        def work():
+            try:
+                result = operation()
+            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                GLib.idle_add(finish, None, str(error))
+            else:
+                GLib.idle_add(finish, result, None)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _home_preview(self, remote):
+        dialog = Adw.AlertDialog(heading="Apply this configuration?",
+                                 body=f"The configuration built successfully.\n\nSource: {remote.source}\nOutput: {remote.output}\n\nApplying it may change your shell, applications, and desktop settings.")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("activate", "Apply configuration")
+
+        def response(_dialog, choice):
+            if choice == "activate":
+                self._home_operation(lambda: activate_home(remote), lambda _: self._refresh(),
+                                     "Applying the reviewed GitHub revision…")
+
+        dialog.connect("response", response)
+        dialog.present(self)
 
     def _fingerprint_dialog(self) -> None:
         if self._fingerprint_cancel is not None:

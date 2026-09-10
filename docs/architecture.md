@@ -2,8 +2,8 @@
 
 This document describes the target experience. The repository is under active
 development and is not ready to enable on shipped machines. Password enrollment,
-fingerprint enrollment, and the session router are implemented; account and key
-creation, network enrollment, remote personalization, and privileged completion
+fingerprint enrollment, remote personalization, and the session router are implemented; account and key
+creation, network enrollment, and privileged completion
 still require implementation and end-to-end verification.
 
 ## Scope
@@ -134,8 +134,11 @@ requires a `Running` backend and an enabled SSH preference.
 
 The optional page accepts a GitHub flake URI, evaluates its selected output,
 shows the source revision, and activates that immutable remote revision. The
-application never activates a dirty local checkout. Failure leaves the prior
-Home Manager generation active and the step resumable.
+application never activates a dirty local checkout. It requires the repository's
+committed lock file without updating dependencies. Build failure leaves the user's
+profile untouched. Activation failure remains retryable, but custom activation
+scripts may already have made changes; the application cannot guarantee rollback
+of arbitrary scripts supplied by the selected configuration.
 
 ## Fleet integration
 
