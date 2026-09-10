@@ -14,6 +14,7 @@ class Step:
 
 STEPS = (
     Step("password", "Choose your password", "Replace the one-time password supplied with the workstation."),
+    Step("connectivity", "Connect to the internet", "Use Ethernet or configure Wi-Fi before connecting your accounts."),
     Step("fingerprint", "Enroll a fingerprint", "Use the fingerprint reader for login, unlock, and approvals."),
     Step("onepassword", "Connect 1Password", "Sign in and enable CLI and SSH agent integration."),
     Step("github", "Connect GitHub", "Authenticate GitHub and register separate authentication and signing keys."),

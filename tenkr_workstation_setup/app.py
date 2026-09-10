@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import os
 import sys
 import threading
 
@@ -133,6 +134,9 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "chrome":
             self._chrome_dialog()
             return
+        if step.key == "connectivity":
+            self._connectivity_dialog()
+            return
         actions = {
             "onepassword": ["1password"],
         }
@@ -153,6 +157,26 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _connectivity_dialog(self):
+        dialog = Adw.AlertDialog(heading="Connect to the internet",
+            body="Connect an Ethernet cable or open Wi-Fi settings to select your network. Return here after connecting and check the connection.")
+        dialog.add_response("close", "Close")
+        dialog.add_response("wifi", "Open Wi-Fi settings")
+        dialog.add_response("check", "Check connection")
+        def response(_dialog, choice):
+            if choice == "wifi":
+                try:
+                    subprocess.Popen(["gnome-control-center", "wifi"],
+                        env=dict(os.environ, XDG_CURRENT_DESKTOP="GNOME"),
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        start_new_session=True)
+                except OSError:
+                    self._message("Network settings unavailable", "GNOME network settings could not start. Connect Ethernet or retry.")
+            elif choice == "check":
+                self._refresh()
+        dialog.connect("response", response)
+        dialog.present(self)
 
     def _chrome_dialog(self):
         if self._chrome_busy:

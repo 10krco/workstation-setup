@@ -118,8 +118,20 @@ def chrome() -> ProbeResult:
     return ProbeResult(False, "Sign in to the work browser and verify its sync settings.")
 
 
+def connectivity() -> ProbeResult:
+    import dbus
+    from .connectivity import connected
+    try:
+        if connected():
+            return ProbeResult(True, "Your internet connection can reach GitHub for enrollment.")
+    except (dbus.DBusException, OSError, ValueError):
+        pass
+    return ProbeResult(False, "Open network settings, connect to Wi-Fi or Ethernet, then check the connection.")
+
+
 PROBES = {
     "password": password,
+    "connectivity": connectivity,
     "fingerprint": fingerprint,
     "onepassword": onepassword,
     "github": github,

@@ -97,8 +97,16 @@
             environment.systemPackages = [ cfg.package ];
             services.fprintd.enable = true;
             services.tailscale.enable = true;
+            networking.networkmanager.enable = true;
             security.polkit.extraConfig = ''
               polkit.addRule(function(action, subject) {
+                if (["org.freedesktop.NetworkManager.network-control",
+                     "org.freedesktop.NetworkManager.enable-disable-wifi",
+                     "org.freedesktop.NetworkManager.settings.modify.system"].indexOf(action.id) !== -1 &&
+                    subject.local && subject.active &&
+                    ${builtins.toJSON cfg.managedUsers}.indexOf(subject.user) !== -1) {
+                  return polkit.Result.YES;
+                }
                 if ((action.id == "net.reactivated.fprint.device.enroll" ||
                      action.id == "net.reactivated.fprint.device.verify") &&
                     subject.local && subject.active &&

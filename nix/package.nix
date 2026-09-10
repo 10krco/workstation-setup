@@ -9,6 +9,7 @@
   git,
   openssh,
   gh,
+  gnome-control-center,
 }:
 
 let
@@ -39,6 +40,7 @@ stdenvNoCC.mkDerivation {
         git
         openssh
         gh
+        gnome-control-center
       ]
     })
   '';
