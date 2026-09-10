@@ -25,6 +25,10 @@
         let
           cfg = config.services.tenkr-workstation-setup;
           stateDirectory = "/var/lib/10kr-workstation-setup";
+          enrollmentGate = import ./nix/enrollment-gate.nix {
+            inherit pkgs;
+            managedUsers = cfg.managedUsers;
+          };
           setupSession =
             pkgs.runCommand "tenkr-workstation-setup-session"
               {
@@ -49,10 +53,7 @@
             ];
             text = ''
               user="$(id -un)"
-              managed=${lib.escapeShellArg stateDirectory}/managed-users/"$user"
-              completion=${lib.escapeShellArg stateDirectory}/completed/"$user"
-
-              if [[ ! -e "$managed" || -e "$completion" ]]; then
+              if ${enrollmentGate} "$user"; then
                 exec ${cfg.normalSessionCommand}
               fi
 
@@ -61,6 +62,7 @@
           };
         in
         {
+          imports = [ ./nix/login-gate.nix ];
           options.services.tenkr-workstation-setup = {
             enable = lib.mkEnableOption "10kR first-login workstation setup";
             package = lib.mkPackageOption self.packages.${pkgs.stdenv.hostPlatform.system} "default" { };
@@ -87,6 +89,10 @@
               {
                 assertion = cfg.managedUsers != [ ];
                 message = "10kR workstation setup requires at least one managed user.";
+              }
+              {
+                assertion = !(builtins.elem "root" cfg.managedUsers);
+                message = "Root must remain available for workstation enrollment recovery.";
               }
               {
                 assertion = config.users.mutableUsers;
@@ -191,6 +197,7 @@
         password-vm = (pkgsFor system).callPackage ./nix/password-vm.nix {
           package = self.packages.${system}.default;
         };
+        login-gate-vm = (pkgsFor system).callPackage ./nix/login-gate-vm.nix { };
         module =
           let
             evaluated = nixpkgs.lib.nixosSystem {
@@ -213,6 +220,20 @@
           in
           assert evaluatedConfig.services.displayManager.sessionData.sessionNames == [ "tenkr-workstation" ];
           assert evaluatedConfig.services.displayManager.defaultSession == "tenkr-workstation";
+          assert nixpkgs.lib.all
+            (
+              name:
+              nixpkgs.lib.hasInfix "tenkr-enrollment-account-gate"
+                evaluatedConfig.security.pam.services.${name}.text
+            )
+            [
+              "login"
+              "sshd"
+              "sudo"
+              "sudo-i"
+              "su"
+              "su-l"
+            ];
           assert nixpkgs.lib.hasInfix "/managed-users/alice"
             evaluatedConfig.systemd.services.tenkr-workstation-setup-state.script;
           (pkgsFor system).runCommand "check-nixos-module" { } ''
