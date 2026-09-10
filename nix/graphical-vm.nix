@@ -61,11 +61,13 @@ pkgs.testers.runNixOSTest {
       managedUsers = [ userName ];
       tailnetName = "example.ts.net";
     };
-    environment.etc."10kr/workstation-users.json".text = builtins.toJSON {
-      ${userName} = {
-        inherit fullName title workEmail;
-      };
-    };
+    environment.etc."10kr/workstation-users.json".text = pkgs.lib.mkDefault (
+      builtins.toJSON {
+        ${userName} = {
+          inherit fullName title workEmail;
+        };
+      }
+    );
   };
   testScript = ''
     from typing import Any, cast
