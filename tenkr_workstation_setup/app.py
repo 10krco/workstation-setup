@@ -11,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-from .probes import probe
+from .probes import probe, ProbeResult
 from .state import EnrollmentState, STEPS, Step
 from .fingerprint import Reader, enroll
 from .personalization import resolve as resolve_home, activate as activate_home
@@ -31,6 +31,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self.state = EnrollmentState()
         self.rows: dict[str, Adw.ActionRow] = {}
         self._probe_generation = 0
+        self._probe_lock = threading.Lock()
         self._fingerprint_cancel = None
         self._home_busy = False
         self._network_cancel = None
@@ -86,7 +87,15 @@ class SetupWindow(Adw.ApplicationWindow):
         thread.start()
 
     def _collect_probes(self, generation: int, finish_after_refresh: bool) -> None:
-        results = {step.key: probe(step) for step in STEPS}
+        results = {}
+        with self._probe_lock:
+            for step in STEPS:
+                if generation != self._probe_generation:
+                    return
+                try:
+                    results[step.key] = probe(step)
+                except Exception:
+                    results[step.key] = ProbeResult(False, "This setup check could not finish. Please retry.")
         GLib.idle_add(self._apply_probes, generation, results, finish_after_refresh)
 
     def _apply_probes(self, generation: int, results: dict, finish_after_refresh: bool) -> bool:

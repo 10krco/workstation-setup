@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import tomllib
 from .identity import git_identity
+from .github_auth import auth_environment
 
 
 def write_config(path, content):
@@ -27,11 +28,12 @@ def write_config(path, content):
             temporary.unlink(missing_ok=True)
 
 
-def command(*args, discard=False):
+def command(*args, discard=False, timeout=120):
     if args[:2] == ("gh", "api"):
         args = (*args[:2], "--hostname", "github.com", *args[2:])
     result = subprocess.run(args, stdout=subprocess.DEVNULL if discard else subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, timeout=120, check=False)
+                            stderr=subprocess.PIPE, text=True, timeout=timeout, check=False,
+                            env=auth_environment() if args[0] == "gh" else None)
     if result.returncode:
         raise RuntimeError(f"{args[0]} failed. Verify account access and retry.")
     return result.stdout
@@ -71,17 +73,19 @@ def register(key, role, title):
         raise RuntimeError("GitHub did not retain the public-key registration.")
 
 
-def signing_configuration():
+def signing_configuration(timeout=120):
     name, email = git_identity()
     settings = {}
     for setting, expected in (("user.name", name), ("user.email", email),
                               ("gpg.format", "ssh"), ("commit.gpgsign", "true"),
                               ("tag.gpgsign", "true")):
-        settings[setting] = command("git", "config", "--global", "--get", setting).strip()
+        settings[setting] = command("git", "config", "--global", "--get", setting, timeout=timeout).strip()
         if settings[setting] != expected:
             raise RuntimeError("Git identity or signing settings do not match the workstation policy.")
     for setting in ("user.signingkey", "gpg.ssh.program"):
-        settings[setting] = command("git", "config", "--global", "--get", setting).strip()
+        settings[setting] = command("git", "config", "--global", "--get", setting, timeout=timeout).strip()
+    if shutil.which(settings["gpg.ssh.program"]) is None:
+        raise RuntimeError("The configured Git signing program is unavailable. Retry GitHub setup to repair it.")
     return settings
 
 
@@ -90,6 +94,41 @@ def verify_email(email):
     if not any(item.get("email", "").casefold() == email.casefold() and item.get("verified") is True
                for page in pages for item in page):
         raise RuntimeError(f"Add and verify {email} at https://github.com/settings/emails, then retry setup.")
+
+
+def ssh_identity_locations(home):
+    result = subprocess.run(["ssh", "-vvG", "git@github.com"], capture_output=True, text=True, timeout=5)
+    paths = {str(home / ".ssh/config")}
+    paths.update(re.findall(r"Reading configuration data (.+)", result.stderr))
+    locations = []
+    for value in sorted(paths):
+        path = Path(value)
+        try:
+            if not path.is_file() or path.stat().st_size > 1024 * 1024:
+                continue
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if re.match(r"\s*IdentityFile(?:\s|=)", line, re.IGNORECASE):
+                    locations.append(f"{path}:{number}: {line.strip()}")
+        except (OSError, UnicodeError):
+            pass
+    return "\n".join(locations) or str(home / ".ssh/config")
+
+
+def managed_ssh_config(existing):
+    header = "# 10kR 1Password SSH agent\n"
+    end = "# End 10kR 1Password SSH agent\n"
+    if existing.startswith(header):
+        if end in existing:
+            existing = existing.split(end, 1)[1].lstrip("\n")
+        else:
+            block, separator, rest = existing[len(header):].partition("\n\n")
+            if not separator and any(line.strip() and not line.strip().startswith(
+                    ("Host github.com", "Host *", "IdentityFile ", "IdentitiesOnly ", "IdentityAgent "))
+                    for line in block.splitlines()):
+                raise RuntimeError("The existing managed SSH block has no boundary. Add a blank line before personal settings in ~/.ssh/config and retry.")
+            existing = rest
+    return (header + "Host github.com\n  IdentityFile ~/.ssh/tenkr-github-authentication.pub\n"
+            "  IdentitiesOnly yes\nHost *\n  IdentityAgent ~/.1password/agent.sock\n" + end + "\n" + existing)
 
 
 def verify_authentication(login, home):
@@ -102,6 +141,9 @@ def verify_authentication(login, home):
     agent = str(home / ".1password/agent.sock")
     identity = str(home / ".ssh/tenkr-github-authentication.pub")
     expand = lambda value: str(Path(value).expanduser())
+    if [expand(value) for value in options.get("identityfile", [])] != [identity]:
+        raise RuntimeError("Conflicting IdentityFile settings apply to GitHub. Inspect these directives, preserve keys for other hosts, and retry:\n"
+                           + ssh_identity_locations(home))
     if (options.get("hostname") != ["github.com"] or options.get("identitiesonly") != ["yes"]
             or [expand(value) for value in options.get("identityagent", [])] != [agent]
             or [expand(value) for value in options.get("identityfile", [])] != [identity]):
@@ -167,10 +209,9 @@ def configure(vault, home=None):
         write_config(ssh / filename, key + "\n")
     config = ssh / "config"
     old_config = config.read_text() if config.exists() else ""
-    header = "# 10kR 1Password SSH agent\n"
-    if not old_config.startswith(header):
-        write_config(config, header + "Host github.com\n  IdentityFile ~/.ssh/tenkr-github-authentication.pub\n"
-                          "  IdentitiesOnly yes\nHost *\n  IdentityAgent ~/.1password/agent.sock\n\n" + old_config)
+    updated_config = managed_ssh_config(old_config)
+    if updated_config != old_config:
+        write_config(config, updated_config)
     agent = home / ".config/1Password/ssh/agent.toml"
     agent.parent.mkdir(parents=True, exist_ok=True)
     existing = agent.read_text() if agent.exists() else ""
