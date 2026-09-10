@@ -48,7 +48,7 @@
           setupRouter = pkgs.writeShellApplication {
             name = "tenkr-workstation-session";
             runtimeInputs = [
-              pkgs.cage
+              pkgs.sway-unwrapped
               pkgs.coreutils
             ];
             text = ''
@@ -57,10 +57,52 @@
                 exec ${cfg.normalSessionCommand}
               fi
 
-              cage -d -- ${lib.getExe cfg.package}
+              sway --config ${setupCompositorConfig}
               if ${enrollmentGate} "$user"; then
                 exec ${cfg.normalSessionCommand}
               fi
+            '';
+          };
+          setupCompositorConfig = pkgs.writeText "tenkr-setup-sway.conf" ''
+            # Deliberately do not include the user's or the distribution's
+            # desktop config: this session has no launcher or terminal bindings.
+            xwayland enable
+            output * bg #181825 solid_color
+            default_border none
+            default_floating_border pixel 2
+            workspace_layout tabbed
+            focus_follows_mouse no
+            bindsym Alt+Tab focus next
+            exec ${lib.getExe setupEnvironment}
+          '';
+          setupEnvironment = pkgs.writeShellApplication {
+            name = "tenkr-workstation-setup-environment";
+            runtimeInputs = [
+              pkgs.dbus
+              pkgs.systemd
+              pkgs.sway-unwrapped
+            ];
+            text = ''
+              # The compositor supplies WAYLAND_DISPLAY to its child. Publish that
+              # environment before D-Bus starts a browser or portal for us.
+              export XDG_CURRENT_DESKTOP=10kR
+              export XDG_SESSION_TYPE=wayland
+              export NIXOS_OZONE_WL=1
+              export TENKR_GUIDED_SESSION=1
+              dbus-update-activation-environment --systemd \
+                WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE NIXOS_OZONE_WL
+              ${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1 &
+              agent=$!
+              cleanup() {
+                kill "$agent" 2>/dev/null || true
+                wait "$agent" 2>/dev/null || true
+                # The next desktop publishes its own compositor environment.
+                dbus-update-activation-environment WAYLAND_DISPLAY= DISPLAY= || true
+                systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY || true
+                swaymsg exit || true
+              }
+              trap cleanup EXIT
+              ${lib.getExe cfg.package}
             '';
           };
         in
@@ -115,7 +157,15 @@
               }
             ];
 
-            environment.systemPackages = [ cfg.package ];
+            environment.systemPackages = [
+              cfg.package
+              pkgs.google-chrome
+            ];
+            xdg.portal = {
+              enable = true;
+              extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
+              config."10kr".default = [ "gtk" ];
+            };
             environment.etc."10kr/workstation-setup-policy.json".text = builtins.toJSON {
               tailnetName = cfg.tailnetName;
             };
@@ -162,25 +212,27 @@
               account required ${pkgs.linux-pam}/lib/security/pam_unix.so
             '';
 
-            environment.etc."dbus-1/system.d/com.tenkr.WorkstationSetup.conf".text = ''
-              <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
-                "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-              <busconfig>
-                <policy user="root">
-                  <allow own="com.tenkr.WorkstationSetup"/>
-                </policy>
-                <policy context="default">
-                  <allow send_destination="com.tenkr.WorkstationSetup"
-                    send_interface="com.tenkr.WorkstationSetup" send_member="SetPassword"/>
-                  <allow send_destination="com.tenkr.WorkstationSetup"
-                    send_interface="com.tenkr.WorkstationSetup" send_member="PrepareNetwork"/>
-                  <allow send_destination="com.tenkr.WorkstationSetup"
-                    send_interface="com.tenkr.WorkstationSetup" send_member="Complete"/>
-                  <allow send_destination="com.tenkr.WorkstationSetup"
-                    send_interface="com.tenkr.WorkstationSetup" send_member="VerifyNetwork"/>
-                </policy>
-              </busconfig>
-            '';
+            services.dbus.packages = [
+              (pkgs.writeTextDir "share/dbus-1/system.d/com.tenkr.WorkstationSetup.conf" ''
+                <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+                  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+                <busconfig>
+                  <policy user="root">
+                    <allow own="com.tenkr.WorkstationSetup"/>
+                  </policy>
+                  <policy context="default">
+                    <allow send_destination="com.tenkr.WorkstationSetup"
+                      send_interface="com.tenkr.WorkstationSetup" send_member="SetPassword"/>
+                    <allow send_destination="com.tenkr.WorkstationSetup"
+                      send_interface="com.tenkr.WorkstationSetup" send_member="PrepareNetwork"/>
+                    <allow send_destination="com.tenkr.WorkstationSetup"
+                      send_interface="com.tenkr.WorkstationSetup" send_member="Complete"/>
+                    <allow send_destination="com.tenkr.WorkstationSetup"
+                      send_interface="com.tenkr.WorkstationSetup" send_member="VerifyNetwork"/>
+                  </policy>
+                </busconfig>
+              '')
+            ];
 
             systemd.services.tenkr-workstation-setup = {
               description = "Workstation enrollment password service";
@@ -245,6 +297,9 @@
         recovery-vm = (pkgsFor system).callPackage ./nix/recovery-vm.nix {
           package = self.packages.${system}.default;
         };
+        graphical-vm = (pkgsFor system).callPackage ./nix/graphical-vm.nix {
+          module = self.nixosModules.default;
+        };
         module =
           let
             evaluated = nixpkgs.lib.nixosSystem {
@@ -258,6 +313,7 @@
                     builtins.elem (nixpkgs.lib.getName package) [
                       "1password"
                       "1password-cli"
+                      "google-chrome"
                     ];
                   services.displayManager.gdm.enable = true;
                   services.desktopManager.gnome.enable = true;

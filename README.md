@@ -22,6 +22,20 @@ The flake exports `packages.<system>.default` and `nixosModules.default`.
 
 The NixOS module enables the 1Password CLI and desktop application, including
 their security wrappers and Polkit ownership for managed users. The host's
-Nixpkgs configuration must permit the unfree `1password` and `1password-cli`
+Nixpkgs configuration must permit the unfree `1password`, `1password-cli`, and `google-chrome`
 packages. The application retains the system wrapper paths so CLI integration
 uses the installed security wrapper rather than an unwrapped store binary.
+
+The module supplies Chrome, a GTK portal backend, and a graphical Polkit agent
+inside a dedicated Sway session with no desktop launcher or terminal bindings.
+The compositor's display environment is published before
+starting setup so applications activated through D-Bus can display their windows.
+The authentication agent and compositor exit with setup. While a third-party app
+is open, a reserved panel on the right provides numbered instructions and a
+return button, including when the app requests fullscreen.
+
+1Password integrations must be enabled in the app. Its Linux preferences include
+authentication tags for the SSH-agent and CLI switches; setup does not rewrite
+these internal settings. The checklist requires a live SSH-agent response and a
+successful desktop CLI request, discarding all CLI output. Enabling a preference
+or merely creating an agent socket does not mark the step complete.

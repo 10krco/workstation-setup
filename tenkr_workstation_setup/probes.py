@@ -6,6 +6,8 @@ import os
 import pwd
 from pathlib import Path
 import subprocess
+import socket
+import struct
 
 from .state import Step
 
@@ -14,6 +16,7 @@ from .state import Step
 class ProbeResult:
     complete: bool
     detail: str
+    required: bool | None = None
 
 
 def _run(*command: str, timeout: int = 5) -> subprocess.CompletedProcess[str] | None:
@@ -38,8 +41,10 @@ def password() -> ProbeResult:
 
 def fingerprint() -> ProbeResult:
     from gi.repository import GLib
-    from .fingerprint import enrolled_fingers
+    from .fingerprint import available_devices, enrolled_fingers
     try:
+        if not available_devices():
+            return ProbeResult(False, "No usable fingerprint reader was found. This step is not required.", required=False)
         if enrolled_fingers():
             return ProbeResult(True, "At least one fingerprint is enrolled.")
         return ProbeResult(False, "No fingerprint is enrolled for this account.")
@@ -49,12 +54,39 @@ def fingerprint() -> ProbeResult:
 
 def onepassword() -> ProbeResult:
     agent = Path.home() / ".1password" / "agent.sock"
-    if not agent.is_socket():
+    if not agent.is_socket() or not _agent_responds(agent):
         return ProbeResult(False, "Sign in to 1Password and enable its SSH agent.")
-    result = _run("op", "vault", "list", "--format", "json", timeout=15)
+    # Only the exit status is needed. Never retain vault names or CLI output.
+    try:
+        result = subprocess.run(["op", "vault", "list", "--format", "json"],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
     if result is None or result.returncode != 0:
         return ProbeResult(False, "Enable desktop CLI integration and unlock 1Password.")
     return ProbeResult(True, "1Password CLI integration and the SSH agent are available.")
+
+
+def _agent_responds(path: Path) -> bool:
+    """Check the identities protocol without requesting a signature or reading keys."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(2)
+            connection.connect(str(path))
+            connection.sendall(b"\x00\x00\x00\x01\x0b")
+            header = b""
+            # Response length, type, and number of identities only. Public keys
+            # and comments in the remaining response are deliberately unread.
+            while len(header) < 9:
+                part = connection.recv(9 - len(header))
+                if not part:
+                    return False
+                header += part
+            length, response, _count = struct.unpack(">IBI", header)
+            return 5 <= length <= 1024 * 1024 and response == 12
+    except OSError:
+        return False
 
 
 def github() -> ProbeResult:

@@ -15,6 +15,11 @@ pkgs.writeScript "tenkr-enrollment-account-gate" ''
       # the LAST occurrence: Python's os.environ keeps the first duplicate.
       environment = dict(entry.split(b"=", 1) for entry in
                          Path("/proc/self/environ").read_bytes().split(b"\0") if b"=" in entry)
+      # GDM includes login's account stack. It must authenticate incomplete
+      # users so the only advertised graphical session can run the router.
+      # Read the authoritative PAM_SERVICE item, never an inherited override.
+      if environment.get(b"PAM_SERVICE") in (b"gdm-password", b"gdm-fingerprint"):
+          sys.exit(0)
       users = [environment.get(key, b"").decode("utf-8", "surrogateescape")
                for key in (b"PAM_USER", b"PAM_RUSER")]
   for user in users:

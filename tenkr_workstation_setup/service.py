@@ -58,10 +58,20 @@ class EnrollmentService(dbus.service.Object):
             manager = dbus.Interface(self.bus.get_object(
                 "net.reactivated.Fprint", "/net/reactivated/Fprint/Manager"),
                 "net.reactivated.Fprint.Manager")
-            device = manager.GetDefaultDevice(timeout=15)
-            fingers = dbus.Interface(self.bus.get_object("net.reactivated.Fprint", device),
-                                     "net.reactivated.Fprint.Device").ListEnrolledFingers(user, timeout=15)
-            if not fingers:
+            devices = manager.GetDevices(timeout=15)
+            enrolled = False
+            for device in devices:
+                try:
+                    fingers = dbus.Interface(self.bus.get_object("net.reactivated.Fprint", device),
+                                             "net.reactivated.Fprint.Device").ListEnrolledFingers(user, timeout=15)
+                except dbus.DBusException as error:
+                    if error.get_dbus_name() != "net.reactivated.Fprint.Error.NoEnrolledPrints":
+                        raise
+                    fingers = []
+                if fingers:
+                    enrolled = True
+                    break
+            if devices and not enrolled:
                 missing.append("fingerprint")
         except dbus.DBusException:
             missing.append("fingerprint")

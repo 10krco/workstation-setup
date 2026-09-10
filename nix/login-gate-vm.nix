@@ -36,6 +36,7 @@ let
             # Environment names must not override the real PAM account items.
             assert pam.pam_putenv(handle, b"PAM_USER=root") == 0
             assert pam.pam_putenv(handle, b"PAM_RUSER=recovery") == 0
+            assert pam.pam_putenv(handle, b"PAM_SERVICE=gdm-password") == 0
             if requester:
                 assert pam.pam_set_item(handle, 8, ctypes.c_char_p(requester.encode())) == 0
             return pam.pam_acct_mgmt(handle, 0) == 0
@@ -49,6 +50,8 @@ let
         assert allowed(service, "recovery"), (service, "unmanaged recovery")
     # The graphical setup and its password operation must remain accessible.
     assert allowed("tenkr-test-graphical", "alice")
+    assert allowed("gdm-password", "alice")
+    assert allowed("gdm-fingerprint", "alice")
   '';
 in
 pkgs.testers.runNixOSTest {
@@ -75,6 +78,9 @@ pkgs.testers.runNixOSTest {
       };
       security.sudo.wheelNeedsPassword = false;
       security.pam.services.tenkr-test-graphical = { };
+      # Mirror GDM's real account include, which inherits login's gate.
+      security.pam.services.gdm-password.text = "account include login";
+      security.pam.services.gdm-fingerprint.text = "account include login";
     };
   };
   testScript = ''

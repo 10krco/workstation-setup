@@ -5,6 +5,12 @@ import os
 import resource
 import sys
 import threading
+from ctypes import CDLL
+
+# Layer shell must load before GTK loads libwayland-client. The Nix wrapper
+# provides the library's immutable store path.
+if os.environ.get("TENKR_LAYER_SHELL_LIBRARY"):
+    CDLL(os.environ["TENKR_LAYER_SHELL_LIBRARY"])
 
 import gi
 
@@ -23,13 +29,15 @@ from .identity import git_identity
 from .chrome_pipe import ChromePipe
 from .chrome_setup import profile_path, record as record_chrome
 from .keyring_setup import enroll as enroll_keyring
+from .guidance import GuidanceWindow
 
 
 class SetupWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application) -> None:
         super().__init__(application=application, title="10kR Workstation Setup")
         self.set_default_size(760, 680)
-        self.fullscreen()
+        if os.environ.get("TENKR_GUIDED_SESSION") != "1":
+            self.fullscreen()
         self.state = EnrollmentState()
         self.rows: dict[str, Adw.ActionRow] = {}
         self._probe_generation = 0
@@ -42,6 +50,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self._chrome = None
         self._keyring_busy = False
         self._completing = False
+        self._guide = None
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -77,6 +86,27 @@ class SetupWindow(Adw.ApplicationWindow):
         page.add(finish_group)
         content.append(page)
         self.set_content(content)
+        self.connect("notify::is-active", self._focus_changed)
+        self._refresh()
+
+    def _focus_changed(self, _window, _property) -> None:
+        if self.is_active() and not self._completing:
+            self._refresh()
+
+    def _show_guide(self, title, steps):
+        if self._guide is not None:
+            self._guide.close()
+        self._guide = GuidanceWindow(self.get_application(), title, steps, self._return_from_app)
+        self._guide.present()
+
+    def _return_from_app(self):
+        if self._guide is not None:
+            self._guide.close()
+            self._guide = None
+        self.present()
+        if os.environ.get("TENKR_GUIDED_SESSION") == "1":
+            subprocess.Popen(["swaymsg", '[app_id="com.tenkr.WorkstationSetup"] focus'],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._refresh()
 
     def _refresh(self, finish_after_refresh: bool = False) -> None:
@@ -112,15 +142,19 @@ class SetupWindow(Adw.ApplicationWindow):
             if complete:
                 self.state.mark_complete(step)
             self.rows[step.key].set_subtitle(result.detail)
+            self.rows[step.key].get_activatable_widget().set_sensitive(result.required is not False)
             self.rows[step.key].set_icon_name(
+                "dialog-information-symbolic" if result.required is False else
                 "emblem-ok-symbolic" if complete else "preferences-system-symbolic"
             )
-        required_complete = all(results[step.key].complete for step in STEPS if step.required)
+        required_steps = [step for step in STEPS
+                          if (results[step.key].required if results[step.key].required is not None else step.required)]
+        required_complete = all(results[step.key].complete for step in required_steps)
         self.finish_button.set_sensitive(required_complete and not self._completing)
 
         if finish_after_refresh:
             if not required_complete:
-                missing = [step.title for step in STEPS if step.required and not results[step.key].complete]
+                missing = [step.title for step in required_steps if not results[step.key].complete]
                 self._message("Setup is not finished", f"Required setup remains: {', '.join(missing)}")
             else:
                 self._begin_completion()
@@ -149,29 +183,38 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "connectivity":
             self._connectivity_dialog()
             return
+        if step.key == "onepassword":
+            self._onepassword_dialog()
+            return
         if step.key == "keyring":
             self._keyring_dialog()
             return
-        actions = {
-            "onepassword": ["1password"],
-        }
-        command = actions.get(step.key)
-        if command:
-            try:
-                subprocess.Popen(command, start_new_session=True)
-            except OSError as error:
-                self._message("Could not open setup", str(error))
-                return
-            GLib.timeout_add_seconds(2, self._refresh_after_action)
-            return
+    def _onepassword_dialog(self):
+        dialog = Adw.AlertDialog(
+            heading="Connect 1Password",
+            body="Sign in and enable the desktop integrations. A guide stays beside 1Password with the exact steps. Setup verifies the connection before marking this complete.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("open", "Open 1Password")
+        dialog.set_response_appearance("open", Adw.ResponseAppearance.SUGGESTED)
 
-        descriptions = {
-            "github": "GitHub and SSH-key enrollment will be connected to this page next.",
-            "keyring": "GNOME Keyring enrollment will be connected to this page next.",
-            "tailscale": "Tailscale enrollment will be connected to this page next.",
-            "home-manager": "Home Manager remote selection will be connected to this page next.",
-        }
-        self._message(step.title, descriptions[step.key])
+        def response(_dialog, choice):
+            if choice == "open":
+                try:
+                    self._show_guide("Connect 1Password", [
+                        ("Sign in and unlock", "Add your 1Password account and unlock it. Enter passwords only in 1Password."),
+                        ("Allow system authentication", "Open Settings → Security. Turn on ‘Unlock using system authentication’."),
+                        ("Enable the CLI", "Open Settings → Developer. Select ‘Integrate with 1Password CLI’."),
+                        ("Enable the SSH agent", "In Developer settings, choose ‘Set up the SSH Agent’. Choose whether prompts should show key names or fingerprints."),
+                        ("Keep it available", "Under Settings → General, keep ‘Keep 1Password in the system tray’ enabled. Leave 1Password unlocked."),
+                        ("Check your progress", "Choose ‘Return to setup and check’ below. Approve any 1Password authorization prompt. This step stays incomplete until the integrations work."),
+                    ])
+                    subprocess.Popen(["1password"], start_new_session=True)
+                except OSError as error:
+                    self._message("Could not open 1Password", str(error))
+
+        dialog.connect("response", response)
+        dialog.present(self)
 
     def _keyring_dialog(self):
         if self._keyring_busy:
@@ -218,6 +261,11 @@ class SetupWindow(Adw.ApplicationWindow):
         def response(_dialog, choice):
             if choice == "wifi":
                 try:
+                    self._show_guide("Connect to Wi-Fi", [
+                        ("Choose your network", "Turn on Wi-Fi and select your network in Settings."),
+                        ("Connect", "Enter the Wi-Fi password in Settings. Wait for the network to show connected."),
+                        ("Verify", "Return to setup below to check internet access."),
+                    ])
                     subprocess.Popen(["gnome-control-center", "wifi"],
                         env=dict(os.environ, XDG_CURRENT_DESKTOP="GNOME"),
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -246,6 +294,13 @@ class SetupWindow(Adw.ApplicationWindow):
         def response(_dialog, choice):
             if choice not in {"open", "verify"}:
                 return
+            if choice == "open":
+                self._show_guide("Connect your work browser", [
+                    ("Sign in to Chrome", f"Open Chrome’s profile menu and sign in with {email}. Signing into a website alone does not connect the browser profile."),
+                    ("Enable sync", "Choose ‘Turn on sync’ and approve the Google prompts and your organization’s profile policies."),
+                    ("Sync everything", "In Chrome Settings → You and Google → Sync and Google services → Manage what you sync, select ‘Sync everything’."),
+                    ("Verify", "Leave Chrome open. Return below, open the work browser step, and choose ‘Verify account and sync’. Setup checks the account and every available sync category."),
+                ])
             self._chrome_busy = True
             def work():
                 try:
@@ -317,6 +372,11 @@ class SetupWindow(Adw.ApplicationWindow):
         def code(value):
             if not cancel.is_set():
                 status.set_body(f"Enter this code at GitHub and authorize workstation setup:\n\n{value}")
+                self._show_guide("Connect GitHub", [
+                    ("Sign in", "Use the GitHub account you use for work."),
+                    ("Enter the device code", value),
+                    ("Authorize", "Approve the GitHub CLI request. Setup then configures your SSH keys and verifies Git signing. Approve any 1Password prompts."),
+                ])
                 Gio.AppInfo.launch_default_for_uri_async("https://github.com/login/device", None, None, None)
             return GLib.SOURCE_REMOVE
 
@@ -369,6 +429,11 @@ class SetupWindow(Adw.ApplicationWindow):
             if not cancel.is_set():
                 link.set_uri(url)
                 link.set_sensitive(True)
+                self._show_guide("Join the work network", [
+                    ("Sign in", "Sign in to Tailscale using your work account."),
+                    ("Choose the work network", "Join the organization’s tailnet and approve connecting this workstation."),
+                    ("Verify", "Return below to see the connection status. Setup verifies the intended tailnet before enabling workstation access."),
+                ])
                 Gio.AppInfo.launch_default_for_uri_async(url, None, None, None)
             return GLib.SOURCE_REMOVE
 
@@ -529,10 +594,6 @@ class SetupWindow(Adw.ApplicationWindow):
         finally:
             GLib.idle_add(self._refresh)
 
-    def _refresh_after_action(self) -> bool:
-        self._refresh()
-        return GLib.SOURCE_REMOVE
-
     def _message(self, heading: str, body: str) -> None:
         dialog = Adw.AlertDialog(heading=heading, body=body)
         dialog.add_response("close", "Close")
@@ -578,6 +639,9 @@ class SetupWindow(Adw.ApplicationWindow):
                 titles.get(key, "Required setup") for key in missing))
             self._refresh()
         else:
+            if self._guide is not None:
+                self._guide.close()
+                self._guide = None
             self.close()
         return GLib.SOURCE_REMOVE
 

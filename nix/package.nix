@@ -3,6 +3,7 @@
   stdenvNoCC,
   python3,
   gtk4,
+  gtk4-layer-shell,
   libadwaita,
   wrapGAppsHook4,
   gobject-introspection,
@@ -30,11 +31,13 @@ stdenvNoCC.mkDerivation {
   ];
   buildInputs = [
     gtk4
+    gtk4-layer-shell
     libadwaita
     python
   ];
 
   preFixup = ''
+    gappsWrapperArgs+=(--set TENKR_LAYER_SHELL_LIBRARY ${gtk4-layer-shell}/lib/libgtk4-layer-shell.so)
     # NixOS supplies op's security wrapper and the GUI's op-ssh-sign through
     # the enabled 1Password modules. Preserve those wrappers for desktop IPC.
     gappsWrapperArgs+=(--suffix PATH : /run/wrappers/bin:/run/current-system/sw/bin)

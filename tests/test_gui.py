@@ -6,6 +6,35 @@ from unittest.mock import patch
 
 @unittest.skipUnless(os.environ.get("TENKR_GUI_TEST") == "1", "requires isolated display")
 class GuiTest(unittest.TestCase):
+    def test_absent_reader_is_optional_without_claiming_enrollment_and_guidance_returns(self):
+        os.environ.pop("WAYLAND_DISPLAY", None)
+        os.environ["GTK_A11Y"] = "none"
+        from tenkr_workstation_setup.app import SetupApplication, SetupWindow
+        from tenkr_workstation_setup.probes import ProbeResult
+        from tenkr_workstation_setup.state import STEPS
+        app = SetupApplication()
+        app.set_application_id("com.tenkr.WorkstationSetup.GuidanceTest")
+        app.register(None)
+        with patch("tenkr_workstation_setup.app.threading.Thread.start"):
+            window = SetupWindow(app)
+            results = {step.key: ProbeResult(True, "Complete") for step in STEPS}
+            results["fingerprint"] = ProbeResult(False, "No reader", required=False)
+            with patch.object(window.state, "mark_complete") as mark:
+                window._apply_probes(window._probe_generation, results, False)
+                self.assertTrue(window.finish_button.get_sensitive())
+                self.assertFalse(window.rows["fingerprint"].get_activatable_widget().get_sensitive())
+                self.assertNotIn("fingerprint", [call.args[0].key for call in mark.call_args_list])
+            results["onepassword"] = ProbeResult(False, "Integration disabled")
+            window._apply_probes(window._probe_generation, results, False)
+            self.assertFalse(window.finish_button.get_sensitive())
+            window._show_guide("Connect", [("Step <one>", "Literal <instructions> & status")])
+            self.assertIsNotNone(window._guide)
+            with patch.object(window, "_refresh") as refresh:
+                window._return_from_app()
+                refresh.assert_called_once()
+            self.assertIsNone(window._guide)
+            window.close()
+
     def test_window_and_setup_dialogs_construct_without_external_actions(self):
         os.environ.pop("WAYLAND_DISPLAY", None)
         os.environ["GTK_A11Y"] = "none"
@@ -22,7 +51,8 @@ class GuiTest(unittest.TestCase):
             window.present()
             for open_dialog in (window._password_dialog, window._home_dialog,
                                 window._fingerprint_dialog, window._network_dialog, window._github_dialog,
-                                window._chrome_dialog, window._connectivity_dialog, window._keyring_dialog):
+                                window._chrome_dialog, window._connectivity_dialog, window._keyring_dialog,
+                                window._onepassword_dialog):
                 open_dialog()
                 dialog = window.get_visible_dialog()
                 self.assertIsNotNone(dialog)

@@ -16,8 +16,9 @@ fleet's fresh-install configuration.
 - [ ] The user sets a new password in the GUI; the old password stops working.
       The replacement survives reboot. Failed operations remain retryable.
 - [ ] Fingerprint enrollment uses the T14 reader, provides scan feedback, supports
-      retry, and verifies the enrolled print. Missing hardware follows an explicit
-      optional-step policy rather than reporting success.
+      retry, and verifies the enrolled print. When fprintd successfully reports
+      no usable reader, the GUI marks the step not required and privileged
+      completion skips it. Service and permission errors remain retryable errors.
 - [ ] The user signs into 1Password and enables CLI integration and its SSH agent.
       The application verifies both and explains any settings that need interaction.
 - [ ] Each workstation user has a 10kR Google Workspace email in `nixos-config`.
