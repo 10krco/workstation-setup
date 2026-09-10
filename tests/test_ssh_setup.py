@@ -3,13 +3,26 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
 from tenkr_workstation_setup.ssh_setup import ensure_item, register, verify_signing
+from tenkr_workstation_setup.ssh_setup import verify_authentication, verify_email
+from tenkr_workstation_setup.ssh_setup import command as real_command, configure, write_config
 
 
 class SshSetupTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.ssh_setup.command")
+    def test_work_email_must_be_verified_on_github(self, command):
+        for records in ([], [{"email": "alice@10kr.co", "verified": False}],
+                        [{"email": "other@10kr.co", "verified": True}]):
+            command.return_value = json.dumps([records])
+            with self.assertRaises(RuntimeError):
+                verify_email("alice@10kr.co")
+        command.return_value = json.dumps([[{"email": "alice@10kr.co", "verified": True}]])
+        verify_email("alice@10kr.co")
+
     @patch("tenkr_workstation_setup.ssh_setup.command")
     def test_existing_item_is_reused_and_only_public_field_requested(self, command):
         command.side_effect = [json.dumps([{"id": "abc123", "title": "key"}]), "ssh-ed25519 AAAA comment"]
@@ -44,6 +57,33 @@ class SshSetupTest(unittest.TestCase):
         self.assertEqual(command.call_count, 3)
 
 
+class AuthenticationTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.ssh_setup.subprocess.run")
+    @patch("tenkr_workstation_setup.ssh_setup.command")
+    def test_exact_account_and_strict_host_verification_required(self, command, run):
+        home = Path("/tmp/alice")
+        effective = ("hostname github.com\nidentitiesonly yes\n"
+                     "identityagent /tmp/alice/.1password/agent.sock\n"
+                     "identityfile /tmp/alice/.ssh/tenkr-github-authentication.pub\n")
+        def commands(*args):
+            return effective if args[0] == "ssh" else json.dumps({"ssh_keys": ["ssh-ed25519 AAAA"]})
+        command.side_effect = commands
+        def authenticate(args, **kwargs):
+            self.assertIn("StrictHostKeyChecking=yes", args)
+            path = next(arg.split("=", 1)[1] for arg in args if arg.startswith("UserKnownHostsFile="))
+            self.assertEqual(Path(path).read_text(), "github.com ssh-ed25519 AAAA\n")
+            return subprocess.CompletedProcess(args, 1, "", "Hi alice! You've successfully authenticated, but GitHub does not provide shell access.\n")
+        run.side_effect = authenticate
+        verify_authentication("alice", home)
+        with self.assertRaises(RuntimeError):
+            verify_authentication("other-account", home)
+        effective += "identityfile /tmp/alice/.ssh/unrelated.pub\n"
+        run.reset_mock()
+        with self.assertRaises(RuntimeError):
+            verify_authentication("alice", home)
+        run.assert_not_called()
+
+
 class SigningIntegrationTest(unittest.TestCase):
     @patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co"))
     def test_real_signature_verified_and_wrong_key_rejected(self, _identity):
@@ -70,3 +110,54 @@ class SigningIntegrationTest(unittest.TestCase):
                 subprocess.run(["git", "config", "--global", "user.name", "Wrong identity"], check=True)
                 with self.assertRaises(RuntimeError):
                     verify_signing((home / "signer.pub").read_text().strip())
+
+
+class ConfigurationRetryTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co"))
+    @patch("tenkr_workstation_setup.ssh_setup.shutil.which", return_value="/example/op-ssh-sign")
+    @patch("tenkr_workstation_setup.ssh_setup.verify_signing")
+    @patch("tenkr_workstation_setup.ssh_setup.verify_authentication")
+    @patch("tenkr_workstation_setup.ssh_setup.register")
+    @patch("tenkr_workstation_setup.ssh_setup.ensure_item")
+    def test_retry_preserves_existing_config_and_records_only_verified_success(self, item, register, authenticate, sign, _which, _identity):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+            environment.update(HOME=directory, XDG_CONFIG_HOME=directory,
+                               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(home / "gitconfig"))
+            (home / ".ssh").mkdir()
+            (home / ".ssh/config").write_text("Host internal\n  HostName internal.example\n")
+            agent = home / ".config/1Password/ssh/agent.toml"
+            agent.parent.mkdir(parents=True)
+            agent.write_text('[[ssh-keys]]\nitem = "existing"\nvault = "Personal"\n')
+            item.side_effect = lambda vault, title: ("auth", "ssh-ed25519 AAAA") if title.endswith("authentication") else ("sign", "ssh-ed25519 BBBB")
+            authenticate.side_effect = [RuntimeError("Agent locked"), None, None]
+            def commands(*args, **kwargs):
+                if args[:2] == ("gh", "api"):
+                    return json.dumps({"login": "alice"}) if args[-1] == "user" else json.dumps([[{"email": "alice@10kr.co", "verified": True}]])
+                return real_command(*args, **kwargs)
+            with patch.dict(os.environ, environment, clear=True), patch("tenkr_workstation_setup.ssh_setup.command", side_effect=commands):
+                receipt = home / ".config/10kr/workstation-setup/signing-verification.json"
+                with self.assertRaises(RuntimeError):
+                    configure("Personal", home)
+                self.assertFalse(receipt.exists())
+                sign.assert_not_called()
+                configure("Personal", home)
+                self.assertTrue(receipt.exists())
+                configure("Personal", home)
+                self.assertEqual((home / ".ssh/config").read_text().count("# 10kR 1Password SSH agent"), 1)
+                self.assertIn("Host internal", (home / ".ssh/config").read_text())
+                self.assertEqual(len(tomllib.loads(agent.read_text())["ssh-keys"]), 3)
+                self.assertEqual(real_command("git", "config", "--global", "user.email").strip(), "alice@10kr.co")
+                self.assertEqual(agent.stat().st_mode & 0o777, 0o600)
+
+    def test_managed_symlink_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            source.write_text("original")
+            link = Path(directory) / "config"
+            link.symlink_to(source)
+            with self.assertRaises(RuntimeError):
+                write_config(link, "new")
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(source.read_text(), "original")

@@ -229,6 +229,9 @@
           DBUS_SESSION_CONFIG = "${(pkgsFor system).dbus}/share/dbus-1/session.conf";
           inputsFrom = [ self.packages.${system}.default ];
           packages = with pkgsFor system; [
+            git
+            openssh
+            gh
             nixfmt
             xvfb-run
             dbus

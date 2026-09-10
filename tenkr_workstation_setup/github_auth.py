@@ -9,8 +9,8 @@ import time
 
 
 def authorized():
-    for endpoint in ("user/keys", "user/ssh_signing_keys"):
-        result = subprocess.run(["gh", "api", endpoint], stdout=subprocess.DEVNULL,
+    for endpoint in ("user/keys", "user/ssh_signing_keys", "user/emails"):
+        result = subprocess.run(["gh", "api", "--hostname", "github.com", endpoint], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, timeout=20, check=False)
         if result.returncode:
             return False
@@ -29,7 +29,7 @@ def login(cancel, display_code, timeout=300):
         return True
     environment = dict(os.environ, GH_BROWSER=shutil.which("true") or "true", NO_COLOR="1")
     args = ["gh", "auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "ssh",
-            "--skip-ssh-key", "--scopes", "admin:public_key,admin:ssh_signing_key"]
+            "--skip-ssh-key", "--scopes", "admin:public_key,admin:ssh_signing_key,user:email"]
     with subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, env=environment, start_new_session=True) as process:
         try:

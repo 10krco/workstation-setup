@@ -158,6 +158,7 @@ class SetupWindow(Adw.ApplicationWindow):
         dialog = Adw.AlertDialog(heading="Connect GitHub and SSH",
                                  body=f"Git identity: {git_name}\n{git_email}\n\nFirst sign in to 1Password and enable its CLI integration and SSH agent. Choose the vault for your keys.")
         group = Adw.PreferencesGroup()
+        group.add(Gtk.LinkButton(uri="https://github.com/settings/emails", label="Verify your work email on GitHub"))
         fields = [Adw.EntryRow(title="1Password vault")]
         for field in fields:
             group.add(field)

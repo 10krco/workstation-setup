@@ -6,6 +6,9 @@
   libadwaita,
   wrapGAppsHook4,
   gobject-introspection,
+  git,
+  openssh,
+  gh,
 }:
 
 let
@@ -29,6 +32,16 @@ stdenvNoCC.mkDerivation {
     libadwaita
     python
   ];
+
+  preFixup = ''
+    gappsWrapperArgs+=(--prefix PATH : ${
+      lib.makeBinPath [
+        git
+        openssh
+        gh
+      ]
+    })
+  '';
 
   installPhase = ''
     runHook preInstall

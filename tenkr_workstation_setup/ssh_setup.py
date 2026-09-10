@@ -1,5 +1,6 @@
 """Idempotent public-key registration; private key material is never requested."""
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -9,7 +10,26 @@ import tomllib
 from .identity import git_identity
 
 
+def write_config(path, content):
+    if path.is_symlink():
+        raise RuntimeError(f"{path.name} is managed through a symbolic link. Update its source configuration before retrying.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def command(*args, discard=False):
+    if args[:2] == ("gh", "api"):
+        args = (*args[:2], "--hostname", "github.com", *args[2:])
     result = subprocess.run(args, stdout=subprocess.DEVNULL if discard else subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, timeout=120, check=False)
     if result.returncode:
@@ -65,6 +85,44 @@ def signing_configuration():
     return settings
 
 
+def verify_email(email):
+    pages = json.loads(command("gh", "api", "--paginate", "--slurp", "user/emails"))
+    if not any(item.get("email", "").casefold() == email.casefold() and item.get("verified") is True
+               for page in pages for item in page):
+        raise RuntimeError(f"Add and verify {email} at https://github.com/settings/emails, then retry setup.")
+
+
+def verify_authentication(login, home):
+    """Authenticate to GitHub using published host keys and the user's SSH configuration."""
+    effective = command("ssh", "-G", "git@github.com")
+    options = {}
+    for line in effective.splitlines():
+        key, _, value = line.partition(" ")
+        options.setdefault(key, []).append(value)
+    agent = str(home / ".1password/agent.sock")
+    identity = str(home / ".ssh/tenkr-github-authentication.pub")
+    expand = lambda value: str(Path(value).expanduser())
+    if (options.get("hostname") != ["github.com"] or options.get("identitiesonly") != ["yes"]
+            or [expand(value) for value in options.get("identityagent", [])] != [agent]
+            or [expand(value) for value in options.get("identityfile", [])] != [identity]):
+        raise RuntimeError("SSH configuration does not select the workstation 1Password agent and authentication key.")
+    metadata = json.loads(command("gh", "api", "meta"))
+    host_keys = metadata.get("ssh_keys", [])
+    if not host_keys or any(not re.fullmatch(r"(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+", key)
+                            for key in host_keys):
+        raise RuntimeError("GitHub did not return recognized SSH host keys.")
+    with tempfile.TemporaryDirectory(prefix="tenkr-ssh-check-") as directory:
+        known_hosts = Path(directory) / "known_hosts"
+        known_hosts.write_text("".join(f"github.com {key}\n" for key in host_keys))
+        result = subprocess.run(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+                                 "-o", "StrictHostKeyChecking=yes", "-o", "GlobalKnownHostsFile=/dev/null",
+                                 "-o", f"UserKnownHostsFile={known_hosts}", "git@github.com"],
+                                capture_output=True, text=True, timeout=120, check=False)
+        greeting = f"Hi {login}! You've successfully authenticated, but GitHub does not provide shell access."
+        if result.returncode != 1 or greeting not in (result.stdout + result.stderr).splitlines():
+            raise RuntimeError("GitHub SSH authentication did not confirm your account. Unlock 1Password and retry.")
+
+
 def verify_signing(public_key):
     """Exercise the configured Git signer without creating a commit in a user's repo."""
     signing_configuration()
@@ -93,6 +151,7 @@ def configure(vault, home=None):
     receipt = home / ".config/10kr/workstation-setup/signing-verification.json"
     receipt.unlink(missing_ok=True)
     login = json.loads(command("gh", "api", "user"))["login"]
+    verify_email(email)
     keys = {}
     for role in ("authentication", "signing"):
         title = f"10kR GitHub {login} {role}"
@@ -105,27 +164,32 @@ def configure(vault, home=None):
     ssh.mkdir(mode=0o700, exist_ok=True)
     for role, (_, key) in keys.items():
         filename = "tenkr-github-authentication.pub" if role == "authentication" else "tenkr-git-signing.pub"
-        (ssh / filename).write_text(key + "\n")
+        write_config(ssh / filename, key + "\n")
     config = ssh / "config"
     old_config = config.read_text() if config.exists() else ""
     header = "# 10kR 1Password SSH agent\n"
     if not old_config.startswith(header):
-        config.write_text(header + "Host github.com\n  IdentityFile ~/.ssh/tenkr-github-authentication.pub\n"
+        write_config(config, header + "Host github.com\n  IdentityFile ~/.ssh/tenkr-github-authentication.pub\n"
                           "  IdentitiesOnly yes\nHost *\n  IdentityAgent ~/.1password/agent.sock\n\n" + old_config)
     agent = home / ".config/1Password/ssh/agent.toml"
     agent.parent.mkdir(parents=True, exist_ok=True)
     existing = agent.read_text() if agent.exists() else ""
     parsed = tomllib.loads(existing)
-    selected = {entry.get("item") for entry in parsed.get("ssh-keys", [])}
+    entries = parsed.get("ssh-keys", [])
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise RuntimeError("The 1Password agent configuration has an invalid SSH key list.")
+    selected = {(entry.get("item"), entry.get("vault")) for entry in entries}
     additions = "".join(f'\n[[ssh-keys]]\nitem = {json.dumps(item)}\nvault = {json.dumps(vault)}\n'
-                        for item, _ in keys.values() if item not in selected)
-    agent.write_text(existing + additions)
+                        for item, _ in keys.values() if (item, vault) not in selected)
+    if additions:
+        write_config(agent, existing + additions)
     for setting, value in (("user.name", name), ("user.email", email), ("gpg.format", "ssh"),
                            ("gpg.ssh.program", signer),
                            ("user.signingkey", str(ssh / "tenkr-git-signing.pub")),
                            ("commit.gpgsign", "true"), ("tag.gpgsign", "true")):
         command("git", "config", "--global", setting, value)
+    verify_authentication(login, home)
     verify_signing(keys["signing"][1])
     receipt.parent.mkdir(parents=True, exist_ok=True)
-    receipt.write_text(json.dumps({"key": keys["signing"][1], "settings": signing_configuration()}))
+    write_config(receipt, json.dumps({"key": keys["signing"][1], "settings": signing_configuration()}))
     return keys
