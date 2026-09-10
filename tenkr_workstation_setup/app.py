@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 
 import gi
 
@@ -9,6 +10,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
+from .probes import probe
 from .state import EnrollmentState, STEPS, Step
 
 
@@ -16,8 +18,10 @@ class SetupWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application) -> None:
         super().__init__(application=application, title="10kR Workstation Setup")
         self.set_default_size(760, 680)
+        self.fullscreen()
         self.state = EnrollmentState()
         self.rows: dict[str, Adw.ActionRow] = {}
+        self._probe_generation = 0
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -29,7 +33,10 @@ class SetupWindow(Adw.ApplicationWindow):
         )
         for step in STEPS:
             row = Adw.ActionRow(title=step.title, subtitle=step.description)
-            button = Gtk.Button(label="Set up", valign=Gtk.Align.CENTER)
+            button = Gtk.Button(
+                label="Open" if step.key in {"password", "fingerprint", "onepassword"} else "Details",
+                valign=Gtk.Align.CENTER,
+            )
             button.add_css_class("suggested-action")
             button.connect("clicked", self._run_step, step)
             row.add_suffix(button)
@@ -52,15 +59,46 @@ class SetupWindow(Adw.ApplicationWindow):
         self.set_content(content)
         self._refresh()
 
-    def _refresh(self) -> None:
+    def _refresh(self, finish_after_refresh: bool = False) -> None:
+        self._probe_generation += 1
+        generation = self._probe_generation
+        self.finish_button.set_sensitive(False)
+        thread = threading.Thread(
+            target=self._collect_probes,
+            args=(generation, finish_after_refresh),
+            daemon=True,
+        )
+        thread.start()
+
+    def _collect_probes(self, generation: int, finish_after_refresh: bool) -> None:
+        results = {step.key: probe(step) for step in STEPS}
+        GLib.idle_add(self._apply_probes, generation, results, finish_after_refresh)
+
+    def _apply_probes(self, generation: int, results: dict, finish_after_refresh: bool) -> bool:
+        if generation != self._probe_generation:
+            return GLib.SOURCE_REMOVE
+
         for step in STEPS:
-            complete = self.state.is_complete(step)
+            result = results[step.key]
+            complete = result.complete
+            if complete:
+                self.state.mark_complete(step)
+            self.rows[step.key].set_subtitle(result.detail)
             self.rows[step.key].set_icon_name(
                 "emblem-ok-symbolic" if complete else "preferences-system-symbolic"
             )
-        self.finish_button.set_sensitive(
-            all(self.state.is_complete(step) for step in STEPS if step.required)
-        )
+        required_complete = all(results[step.key].complete for step in STEPS if step.required)
+        self.finish_button.set_sensitive(required_complete)
+
+        if finish_after_refresh:
+            if not required_complete:
+                missing = [step.title for step in STEPS if step.required and not results[step.key].complete]
+                self._message("Setup is not finished", f"Required setup remains: {', '.join(missing)}")
+            else:
+                self.state.finish()
+                self.close()
+
+        return GLib.SOURCE_REMOVE
 
     def _run_step(self, _button: Gtk.Button, step: Step) -> None:
         actions = {
@@ -75,7 +113,7 @@ class SetupWindow(Adw.ApplicationWindow):
             except OSError as error:
                 self._message("Could not open setup", str(error))
                 return
-            self._confirm_completion(step)
+            GLib.timeout_add_seconds(2, self._refresh_after_action)
             return
 
         descriptions = {
@@ -86,21 +124,9 @@ class SetupWindow(Adw.ApplicationWindow):
         }
         self._message(step.title, descriptions[step.key])
 
-    def _confirm_completion(self, step: Step) -> None:
-        dialog = Adw.AlertDialog(
-            heading=step.title,
-            body="Return here after completing the opened setup screen.",
-        )
-        dialog.add_response("later", "Not yet")
-        dialog.add_response("complete", "Done")
-        dialog.set_response_appearance("complete", Adw.ResponseAppearance.SUGGESTED)
-        dialog.connect("response", self._completion_response, step)
-        dialog.present(self)
-
-    def _completion_response(self, _dialog: Adw.AlertDialog, response: str, step: Step) -> None:
-        if response == "complete":
-            self.state.mark_complete(step)
-            self._refresh()
+    def _refresh_after_action(self) -> bool:
+        self._refresh()
+        return GLib.SOURCE_REMOVE
 
     def _message(self, heading: str, body: str) -> None:
         dialog = Adw.AlertDialog(heading=heading, body=body)
@@ -108,12 +134,7 @@ class SetupWindow(Adw.ApplicationWindow):
         dialog.present(self)
 
     def _finish(self, _button: Gtk.Button) -> None:
-        try:
-            self.state.finish()
-        except ValueError as error:
-            self._message("Setup is not finished", str(error))
-            return
-        self.close()
+        self._refresh(finish_after_refresh=True)
 
 
 class SetupApplication(Adw.Application):

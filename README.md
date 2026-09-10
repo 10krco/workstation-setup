@@ -6,9 +6,9 @@ machine is imaged, including the user's password, fingerprints, 1Password,
 GitHub SSH keys and signing, GNOME Keyring, Tailscale, and an optional Home
 Manager remote.
 
-The application is designed as a resumable state machine. It records only
-non-secret completion state under `~/.config/10kr/workstation-setup`; private
-keys and keyring passwords remain in 1Password.
+The application is designed as a resumable state machine. GDM exposes only its
+full-screen router session to managed users until root-owned enrollment state
+records completion. Private keys and keyring passwords remain in 1Password.
 
 ## Development
 
