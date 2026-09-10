@@ -95,6 +95,10 @@ pkgs.testers.runNixOSTest {
       machine.send_key("ret")
     ''}
     machine.wait_until_succeeds("pgrep -u ${userName} -f bin/tenkr-workstation-setup", timeout=60)
+    # The standalone image must provide the services used by GUI enrollment.
+    for unit in ["tenkr-onepassword", "tenkr-gnome-keyring-unlock"]:
+        loaded = machine.succeed("setpriv --reuid=1000 --regid=100 --init-groups env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus systemctl --user show " + unit + " --property=LoadState --value").strip()
+        assert loaded == "loaded", (unit, loaded)
     machine.sleep(10)
     machine.wait_for_text("First-login checklist", timeout=60)
     machine.screenshot("first-login")
