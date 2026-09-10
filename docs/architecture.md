@@ -3,8 +3,10 @@
 ## Scope
 
 The first supported target is the Lenovo ThinkPad T14 Gen 7 AMD used by the
-10kR workstation image. The setup application runs once for each managed user
-after their first successful GDM login.
+10kR workstation image. The first successful GDM login starts setup in a single
+10kR router session. Later logins resume setup until every required probe passes.
+During that lifecycle, the router launches the application full-screen under
+Cage instead of launching GNOME or Hyprland.
 
 The installer creates the account with a random one-time password and a
 root-owned `password-required` marker. NixOS uses mutable users, so later fleet
@@ -32,6 +34,24 @@ Its D-Bus policy permits calls only from an active local session. Every method
 checks the caller UID against the target account and exposes a narrow operation
 instead of arbitrary command execution. Secrets are accepted through D-Bus
 method payloads, consumed immediately, and never logged or persisted.
+
+### Login-session enforcement
+
+GDM advertises only the 10kR router session. The module deliberately replaces
+the display manager's combined session list, so GNOME and Hyprland cannot be
+selected directly from the login screen. The router consults completion state
+under `/var/lib/10kr-workstation-setup`, which is writable only by root.
+
+For an incomplete managed user, the router starts Cage without virtual-terminal
+switching and runs the setup application as its sole full-screen client. If the
+application exits or crashes, Cage exits and GDM regains control; no normal
+desktop is present underneath it. After the privileged service verifies every
+required step, it atomically records completion. The next login routes to the
+configured normal desktop.
+
+This is an enrollment gate for the ordinary local login path. NixOS recovery
+boot remains available to administrators so a broken enrollment build cannot
+make the machine unrecoverable.
 
 ### Enrollment engine
 
@@ -107,6 +127,6 @@ Home Manager generation active and the step resumable.
 
 The repository exports a package and NixOS module. `nixos-config` pins the
 public flake revision, enables the module in the workstation role, and supplies
-the supported hardware profile and required-step policy. The user service is
-conditioned on the absence of the per-user completion marker, so setup opens at
-each login until every required probe passes.
+the supported hardware profile, managed users, normal desktop command, and
+required-step policy. The root-owned completion record keeps the kiosk in place
+across restarts until every required probe passes.

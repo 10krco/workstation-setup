@@ -68,7 +68,11 @@ def github() -> ProbeResult:
 
 def keyring() -> ProbeResult:
     reference = Path.home() / ".config" / "10kr" / "gnome-keyring-1password-secret-reference"
-    if reference.is_file() and reference.read_text().strip().startswith("op://"):
+    try:
+        valid_reference = reference.is_file() and reference.read_text().strip().startswith("op://")
+    except (OSError, UnicodeError):
+        valid_reference = False
+    if valid_reference:
         return ProbeResult(True, "The encrypted login keyring is backed by a 1Password item.")
     return ProbeResult(False, "The login keyring has not been enrolled with 1Password.")
 

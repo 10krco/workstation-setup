@@ -19,6 +19,12 @@ class ProbeTest(unittest.TestCase):
             reference.write_text("op://Personal/example/password\n")
             self.assertTrue(keyring().complete)
 
+    def test_keyring_treats_an_unreadable_reference_as_incomplete(self) -> None:
+        with patch.object(Path, "is_file", return_value=True), patch.object(
+            Path, "read_text", side_effect=OSError("unreadable")
+        ):
+            self.assertFalse(keyring().complete)
+
 
 if __name__ == "__main__":
     unittest.main()
