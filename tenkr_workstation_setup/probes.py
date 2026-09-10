@@ -68,7 +68,7 @@ def github() -> ProbeResult:
     from .ssh_setup import signing_configuration
     try:
         receipt = json.loads((Path.home() / ".config/10kr/workstation-setup/signing-verification.json").read_text())
-        if receipt != {"key": signing_key.read_text().strip(), "settings": signing_configuration()}:
+        if receipt != {"key": signing_key.read_text().strip(), "settings": signing_configuration(timeout=1)}:
             raise ValueError("Signing settings changed")
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
         return ProbeResult(False, "Git signing needs verification. Run GitHub setup to retry.")

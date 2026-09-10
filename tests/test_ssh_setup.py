@@ -10,9 +10,23 @@ from unittest.mock import patch
 from tenkr_workstation_setup.ssh_setup import ensure_item, register, verify_signing
 from tenkr_workstation_setup.ssh_setup import verify_authentication, verify_email
 from tenkr_workstation_setup.ssh_setup import command as real_command, configure, write_config
+from tenkr_workstation_setup.ssh_setup import managed_ssh_config
+from tenkr_workstation_setup.ssh_setup import signing_configuration
 
 
 class SshSetupTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice (Engineer)", "alice@10kr.co"))
+    @patch("tenkr_workstation_setup.ssh_setup.shutil.which", return_value=None)
+    @patch("tenkr_workstation_setup.ssh_setup.command")
+    def test_missing_signer_fails_and_probe_timeout_is_forwarded(self, command, _which, _identity):
+        values = {"user.name": "Alice (Engineer)", "user.email": "alice@10kr.co", "gpg.format": "ssh",
+                  "commit.gpgsign": "true", "tag.gpgsign": "true", "user.signingkey": "/key.pub",
+                  "gpg.ssh.program": "/removed/op-ssh-sign"}
+        command.side_effect = lambda *args, **kwargs: values[args[-1]]
+        with self.assertRaises(RuntimeError):
+            signing_configuration(timeout=1)
+        self.assertTrue(all(call.kwargs["timeout"] == 1 for call in command.call_args_list))
+
     @patch("tenkr_workstation_setup.ssh_setup.command")
     def test_work_email_must_be_verified_on_github(self, command):
         for records in ([], [{"email": "alice@10kr.co", "verified": False}],
@@ -58,9 +72,10 @@ class SshSetupTest(unittest.TestCase):
 
 
 class AuthenticationTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.ssh_setup.ssh_identity_locations", return_value="/tmp/alice/.ssh/config:9: IdentityFile unrelated.pub")
     @patch("tenkr_workstation_setup.ssh_setup.subprocess.run")
     @patch("tenkr_workstation_setup.ssh_setup.command")
-    def test_exact_account_and_strict_host_verification_required(self, command, run):
+    def test_exact_account_and_strict_host_verification_required(self, command, run, locations):
         home = Path("/tmp/alice")
         effective = ("hostname github.com\nidentitiesonly yes\n"
                      "identityagent /tmp/alice/.1password/agent.sock\n"
@@ -82,6 +97,7 @@ class AuthenticationTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             verify_authentication("alice", home)
         run.assert_not_called()
+        locations.assert_called_once_with(home)
 
 
 class SigningIntegrationTest(unittest.TestCase):
@@ -113,6 +129,13 @@ class SigningIntegrationTest(unittest.TestCase):
 
 
 class ConfigurationRetryTest(unittest.TestCase):
+    def test_incomplete_managed_block_is_repaired_without_losing_personal_hosts(self):
+        personal = "Host internal\n  HostName internal.example\n"
+        old = "# 10kR 1Password SSH agent\nHost github.com\n\n" + personal
+        fixed = managed_ssh_config(old)
+        self.assertIn("IdentitiesOnly yes", fixed)
+        self.assertTrue(fixed.endswith(personal))
+        self.assertEqual(managed_ssh_config(fixed), fixed)
     @patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co"))
     @patch("tenkr_workstation_setup.ssh_setup.shutil.which", return_value="/example/op-ssh-sign")
     @patch("tenkr_workstation_setup.ssh_setup.verify_signing")

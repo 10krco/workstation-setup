@@ -8,10 +8,30 @@ import subprocess
 import time
 
 
+def auth_environment():
+    environment = dict(os.environ)
+    for name in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"):
+        environment.pop(name, None)
+    return environment
+
+
 def authorized():
+    environment = auth_environment()
+    result = subprocess.run(["gh", "api", "--hostname", "github.com", "--include", "user"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True, env=environment, timeout=20, check=False)
+    if result.returncode:
+        return False
+    scopes = set()
+    for line in result.stdout.splitlines():
+        if line.lower().startswith("x-oauth-scopes:"):
+            scopes.update(value.strip() for value in line.split(":", 1)[1].split(","))
+    if not ({"write:public_key", "admin:public_key"} & scopes
+            and {"write:ssh_signing_key", "admin:ssh_signing_key"} & scopes):
+        return False
     for endpoint in ("user/keys", "user/ssh_signing_keys", "user/emails"):
         result = subprocess.run(["gh", "api", "--hostname", "github.com", endpoint], stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, timeout=20, check=False)
+                                stderr=subprocess.DEVNULL, env=environment, timeout=20, check=False)
         if result.returncode:
             return False
     return True
@@ -27,7 +47,7 @@ def login(cancel, display_code, timeout=300):
         return False
     if authorized():
         return True
-    environment = dict(os.environ, GH_BROWSER=shutil.which("true") or "true", NO_COLOR="1")
+    environment = dict(auth_environment(), GH_BROWSER=shutil.which("true") or "true", NO_COLOR="1")
     args = ["gh", "auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "ssh",
             "--skip-ssh-key", "--scopes", "admin:public_key,admin:ssh_signing_key,user:email"]
     with subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
