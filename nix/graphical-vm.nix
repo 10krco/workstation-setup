@@ -68,6 +68,7 @@ pkgs.testers.runNixOSTest {
   };
   testScript = ''
     from typing import Any, cast
+    import shlex
 
     def click(x, y):
         assert machine.qmp_client is not None
@@ -141,7 +142,11 @@ pkgs.testers.runNixOSTest {
     # completion and rejection are independently tested in completion-vm; this
     # root-created fixture is not evidence of real account enrollment.
     machine.succeed("touch /var/lib/10kr-workstation-setup/completed/${userName}")
-    click(1256, 48)
+    # Request the normal Wayland window-close protocol. The first session above
+    # tests the titlebar button; this assertion isolates the router from pointer
+    # timing during asynchronous checklist refreshes after a second login.
+    sway_socket = machine.succeed("ls /run/user/1000/sway-ipc.*.sock").strip()
+    machine.succeed("env SWAYSOCK=" + shlex.quote(sway_socket) + " ${pkgs.sway-unwrapped}/bin/swaymsg " + shlex.quote('[app_id="com.tenkr.WorkstationSetup"] kill'))
     machine.wait_until_succeeds("setpriv --reuid=1000 --regid=100 --init-groups env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus busctl --user status org.gnome.Shell", timeout=90)
     machine.wait_for_text("Take Tour|Type to search", timeout=90)
     machine.screenshot("completed-desktop")
