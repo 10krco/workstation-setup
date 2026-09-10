@@ -1,5 +1,11 @@
 # Architecture
 
+This document describes the target experience. The repository is under active
+development and is not ready to enable on shipped machines. Password enrollment
+and the session router are implemented; fingerprint enrollment, account and key
+creation, network enrollment, remote personalization, and privileged completion
+still require implementation and end-to-end verification.
+
 ## Scope
 
 The first supported target is the Lenovo ThinkPad T14 Gen 7 AMD used by the
@@ -8,8 +14,8 @@ The first supported target is the Lenovo ThinkPad T14 Gen 7 AMD used by the
 During that lifecycle, the router launches the application full-screen under
 Cage instead of launching GNOME or Hyprland.
 
-The installer creates the account with a random one-time password and a
-root-owned `password-required` marker. NixOS uses mutable users, so later fleet
+The installer creates the account with a random one-time password and includes
+it in the managed user policy. NixOS uses mutable users, so later fleet
 deployments do not overwrite the password selected during setup.
 
 ## Components
@@ -71,9 +77,14 @@ the app repeats probes and resumes at the first incomplete required step.
 
 ### Password
 
-The password step is required only when the root-owned one-time-password marker
-exists. The privileged service validates the caller and changes the password
-through PAM-compatible system tooling. A successful change removes the marker.
+The password step remains required until a root-owned `password-set/USER` record
+exists. The application collects the supplied password and a matching new
+password in masked fields. The privileged service derives the account from the
+D-Bus sender, checks its active local Wayland session through logind, and verifies
+the supplied password using a dedicated password-only PAM service. It feeds the
+replacement to `chpasswd` through stdin and records success only after that
+command succeeds. A completed account cannot use this API to change its password
+again. Passwords are excluded from command arguments, output, and state files.
 
 ### Fingerprint
 
