@@ -37,13 +37,14 @@ def password() -> ProbeResult:
 
 
 def fingerprint() -> ProbeResult:
-    result = _run("fprintd-list", os.environ.get("USER", ""))
-    if result is None:
-        return ProbeResult(False, "The fingerprint service is not available.")
-    output = f"{result.stdout}\n{result.stderr}".lower()
-    if result.returncode == 0 and "finger" in output:
-        return ProbeResult(True, "At least one fingerprint is enrolled.")
-    return ProbeResult(False, "No fingerprint is enrolled for this account.")
+    from gi.repository import GLib
+    from .fingerprint import enrolled_fingers
+    try:
+        if enrolled_fingers():
+            return ProbeResult(True, "At least one fingerprint is enrolled.")
+        return ProbeResult(False, "No fingerprint is enrolled for this account.")
+    except GLib.Error:
+        return ProbeResult(False, "The fingerprint reader is unavailable or access was denied. Retry enrollment.")
 
 
 def onepassword() -> ProbeResult:
