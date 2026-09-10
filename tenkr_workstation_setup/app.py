@@ -12,6 +12,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .probes import probe
 from .state import EnrollmentState, STEPS, Step
+from .fingerprint import Reader, enroll
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -22,6 +23,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self.state = EnrollmentState()
         self.rows: dict[str, Adw.ActionRow] = {}
         self._probe_generation = 0
+        self._fingerprint_cancel = None
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -104,8 +106,10 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "password":
             self._password_dialog()
             return
+        if step.key == "fingerprint":
+            self._fingerprint_dialog()
+            return
         actions = {
-            "fingerprint": ["fprintd-enroll"],
             "onepassword": ["1password"],
         }
         command = actions.get(step.key)
@@ -125,6 +129,38 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _fingerprint_dialog(self) -> None:
+        if self._fingerprint_cancel is not None:
+            return
+        cancel = threading.Event()
+        self._fingerprint_cancel = cancel
+        dialog = Adw.AlertDialog(heading="Enroll your right index finger", body="Connecting to the reader…")
+        dialog.add_response("close", "Cancel")
+        dialog.connect("response", lambda *_: cancel.set())
+        dialog.present(self)
+
+        def update(message):
+            if not cancel.is_set():
+                dialog.set_body(message)
+            return GLib.SOURCE_REMOVE
+
+        def done(message):
+            update(message)
+            dialog.set_response_label("close", "Close")
+            self._fingerprint_cancel = None
+            self._refresh()
+            return GLib.SOURCE_REMOVE
+
+        def run():
+            try:
+                success = enroll(Reader(), cancel, lambda message: GLib.idle_add(update, message))
+                message = "Your fingerprint is enrolled." if success else "Enrollment canceled."
+            except (GLib.Error, RuntimeError) as error:
+                message = str(error)
+            GLib.idle_add(done, message)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _password_dialog(self) -> None:
         dialog = Adw.AlertDialog(heading="Choose your password",

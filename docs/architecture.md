@@ -1,8 +1,8 @@
 # Architecture
 
 This document describes the target experience. The repository is under active
-development and is not ready to enable on shipped machines. Password enrollment
-and the session router are implemented; fingerprint enrollment, account and key
+development and is not ready to enable on shipped machines. Password enrollment,
+fingerprint enrollment, and the session router are implemented; account and key
 creation, network enrollment, remote personalization, and privileged completion
 still require implementation and end-to-end verification.
 
@@ -90,8 +90,11 @@ again. Passwords are excluded from command arguments, output, and state files.
 
 The application calls fprintd over D-Bus. It claims the fixed T14 sensor for the
 current user, starts right-index enrollment, renders each `EnrollStatus` signal,
-and verifies the stored print before completing. The step becomes optional if
-the expected sensor is unavailable.
+and verifies the stored print before completing. Cancellation and timeout stop
+the scan and release the device. The module authorizes enrollment and verification
+for active local managed users without granting access to another user's prints.
+The target-hardware enrollment and missing-hardware optional-step policy still
+need acceptance testing and implementation, respectively.
 
 ### 1Password and SSH keys
 

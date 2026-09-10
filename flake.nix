@@ -95,6 +95,17 @@
             ];
 
             environment.systemPackages = [ cfg.package ];
+            services.fprintd.enable = true;
+            security.polkit.extraConfig = ''
+              polkit.addRule(function(action, subject) {
+                if ((action.id == "net.reactivated.fprint.device.enroll" ||
+                     action.id == "net.reactivated.fprint.device.verify") &&
+                    subject.local && subject.active &&
+                    ${builtins.toJSON cfg.managedUsers}.indexOf(subject.user) !== -1) {
+                  return polkit.Result.YES;
+                }
+              });
+            '';
 
             # GDM must expose only the router. The router starts either the kiosk
             # or the configured desktop based on root-owned enrollment state.
