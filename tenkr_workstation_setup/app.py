@@ -9,6 +9,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
+from .probes import probe
 from .state import EnrollmentState, STEPS, Step
 
 
@@ -29,7 +30,7 @@ class SetupWindow(Adw.ApplicationWindow):
         )
         for step in STEPS:
             row = Adw.ActionRow(title=step.title, subtitle=step.description)
-            button = Gtk.Button(label="Set up", valign=Gtk.Align.CENTER)
+            button = Gtk.Button(label="Open", valign=Gtk.Align.CENTER)
             button.add_css_class("suggested-action")
             button.connect("clicked", self._run_step, step)
             row.add_suffix(button)
@@ -54,7 +55,11 @@ class SetupWindow(Adw.ApplicationWindow):
 
     def _refresh(self) -> None:
         for step in STEPS:
-            complete = self.state.is_complete(step)
+            result = probe(step)
+            complete = result.complete
+            if complete:
+                self.state.mark_complete(step)
+            self.rows[step.key].set_subtitle(result.detail)
             self.rows[step.key].set_icon_name(
                 "emblem-ok-symbolic" if complete else "preferences-system-symbolic"
             )
@@ -75,7 +80,7 @@ class SetupWindow(Adw.ApplicationWindow):
             except OSError as error:
                 self._message("Could not open setup", str(error))
                 return
-            self._confirm_completion(step)
+            GLib.timeout_add_seconds(2, self._refresh_after_action)
             return
 
         descriptions = {
@@ -86,21 +91,9 @@ class SetupWindow(Adw.ApplicationWindow):
         }
         self._message(step.title, descriptions[step.key])
 
-    def _confirm_completion(self, step: Step) -> None:
-        dialog = Adw.AlertDialog(
-            heading=step.title,
-            body="Return here after completing the opened setup screen.",
-        )
-        dialog.add_response("later", "Not yet")
-        dialog.add_response("complete", "Done")
-        dialog.set_response_appearance("complete", Adw.ResponseAppearance.SUGGESTED)
-        dialog.connect("response", self._completion_response, step)
-        dialog.present(self)
-
-    def _completion_response(self, _dialog: Adw.AlertDialog, response: str, step: Step) -> None:
-        if response == "complete":
-            self.state.mark_complete(step)
-            self._refresh()
+    def _refresh_after_action(self) -> bool:
+        self._refresh()
+        return GLib.SOURCE_REMOVE
 
     def _message(self, heading: str, body: str) -> None:
         dialog = Adw.AlertDialog(heading=heading, body=body)
