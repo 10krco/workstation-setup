@@ -24,7 +24,8 @@ class ProbeTest(unittest.TestCase):
             config.return_value = {"user.name": "Changed identity"}
             self.assertFalse(github().complete)
 
-    def test_keyring_requires_a_1password_reference(self) -> None:
+    @patch("tenkr_workstation_setup.probes._run", return_value=Mock(stdout="LoadState=loaded\nResult=success\n"))
+    def test_keyring_requires_a_verified_reference_and_unlock_service(self, run) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.object(Path, "home", return_value=Path(directory)):
             self.assertEqual(
                 keyring(),
@@ -34,7 +35,13 @@ class ProbeTest(unittest.TestCase):
             reference = Path(directory) / ".config" / "10kr" / "gnome-keyring-1password-secret-reference"
             reference.parent.mkdir(parents=True)
             reference.write_text("op://Personal/example/password\n")
+            self.assertFalse(keyring().complete)
+            receipt = Path(directory) / ".config/10kr/workstation-setup/keyring-verification.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"reference": "op://Personal/example/password"}))
             self.assertTrue(keyring().complete)
+            run.return_value.stdout = "LoadState=not-found\n"
+            self.assertFalse(keyring().complete)
 
     def test_keyring_treats_an_unreadable_reference_as_incomplete(self) -> None:
         with patch.object(Path, "is_file", return_value=True), patch.object(

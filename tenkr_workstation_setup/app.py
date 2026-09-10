@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import os
+import resource
 import sys
 import threading
 
@@ -21,6 +22,7 @@ from .ssh_setup import configure as configure_ssh
 from .identity import git_identity
 from .chrome_pipe import ChromePipe
 from .chrome_setup import profile_path, record as record_chrome
+from .keyring_setup import enroll as enroll_keyring
 
 
 class SetupWindow(Adw.ApplicationWindow):
@@ -37,6 +39,7 @@ class SetupWindow(Adw.ApplicationWindow):
         self._github_busy = False
         self._chrome_busy = False
         self._chrome = None
+        self._keyring_busy = False
 
         header = Adw.HeaderBar()
         title = Adw.WindowTitle(title="Set up your 10kR workstation", subtitle="Progress is saved automatically")
@@ -137,6 +140,9 @@ class SetupWindow(Adw.ApplicationWindow):
         if step.key == "connectivity":
             self._connectivity_dialog()
             return
+        if step.key == "keyring":
+            self._keyring_dialog()
+            return
         actions = {
             "onepassword": ["1password"],
         }
@@ -157,6 +163,42 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _keyring_dialog(self):
+        if self._keyring_busy:
+            return
+        dialog = Adw.AlertDialog(heading="Protect application secrets",
+            body="Keep 1Password unlocked. Setup stores a random keyring password there and creates an encrypted login keyring. If a login keyring already exists, enter its current password to preserve its contents. Leave that field empty for a new keyring.")
+        group = Adw.PreferencesGroup()
+        vault = Adw.EntryRow(title="1Password vault")
+        current = Adw.PasswordEntryRow(title="Current keyring password, if one exists")
+        group.add(vault)
+        group.add(current)
+        dialog.set_extra_child(group)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("enroll", "Protect keyring")
+        def response(_dialog, choice):
+            if choice != "enroll":
+                current.set_text("")
+                return
+            selected_vault, password = vault.get_text().strip(), current.get_text()
+            current.set_text("")
+            self._keyring_busy = True
+            def work():
+                try:
+                    enroll_keyring(selected_vault, password)
+                    message = "The encrypted keyring is ready. On later logins, unlock 1Password to unlock it automatically."
+                except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    message = str(error)
+                GLib.idle_add(done, message)
+            def done(message):
+                self._keyring_busy = False
+                self._message("Application secrets", message)
+                self._refresh()
+                return GLib.SOURCE_REMOVE
+            threading.Thread(target=work, daemon=True).start()
+        dialog.connect("response", response)
+        dialog.present(self)
 
     def _connectivity_dialog(self):
         dialog = Adw.AlertDialog(heading="Connect to the internet",
@@ -501,6 +543,7 @@ class SetupApplication(Adw.Application):
 
 
 def main() -> int:
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     app = SetupApplication()
     return app.run(sys.argv)
 

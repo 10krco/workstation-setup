@@ -28,3 +28,6 @@ jobs:
         run: nix develop --command bash -c 'dbus-run-session --config-file="$DBUS_SESSION_CONFIG" -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo TENKR_GUI_TEST=1 python -m unittest discover -s tests -p test_gui.py -v'
       - name: Build
         run: nix flake check --no-update-lock-file
+      # Use a private session bus and disposable home; never a host user's keyring.
+      - name: Exercise encrypted keyring creation and migration
+        run: nix develop --command python tests/run_keyring_runtime.py

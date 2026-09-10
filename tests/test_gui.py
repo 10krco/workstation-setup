@@ -22,7 +22,7 @@ class GuiTest(unittest.TestCase):
             window.present()
             for open_dialog in (window._password_dialog, window._home_dialog,
                                 window._fingerprint_dialog, window._network_dialog, window._github_dialog,
-                                window._chrome_dialog, window._connectivity_dialog):
+                                window._chrome_dialog, window._connectivity_dialog, window._keyring_dialog):
                 open_dialog()
                 dialog = window.get_visible_dialog()
                 self.assertIsNotNone(dialog)

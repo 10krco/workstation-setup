@@ -82,7 +82,15 @@ def keyring() -> ProbeResult:
     except (OSError, UnicodeError):
         valid_reference = False
     if valid_reference:
-        return ProbeResult(True, "The encrypted login keyring is backed by a 1Password item.")
+        try:
+            receipt = json.loads((Path.home() / ".config/10kr/workstation-setup/keyring-verification.json").read_text())
+            result = _run("systemctl", "--user", "show", "tenkr-gnome-keyring-unlock.service",
+                          "--property=LoadState,Result")
+            fields = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line) if result is not None else {}
+            if receipt == {"reference": reference.read_text().strip()} and fields.get("LoadState") == "loaded" and fields.get("Result") == "success":
+                return ProbeResult(True, "The encrypted login keyring is backed by 1Password and its unlock service is available.")
+        except (OSError, ValueError, TypeError):
+            pass
     return ProbeResult(False, "The login keyring has not been enrolled with 1Password.")
 
 

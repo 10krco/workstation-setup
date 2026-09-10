@@ -240,6 +240,7 @@
             git
             openssh
             gh
+            gnome-keyring
             nixfmt
             xvfb-run
             dbus
