@@ -116,6 +116,11 @@
             environment.etc."10kr/workstation-setup-policy.json".text = builtins.toJSON {
               tailnetName = cfg.tailnetName;
             };
+            programs._1password.enable = true;
+            programs._1password-gui = {
+              enable = true;
+              polkitPolicyOwners = cfg.managedUsers;
+            };
             services.fprintd.enable = true;
             services.tailscale.enable = true;
             networking.networkmanager.enable = true;
@@ -231,6 +236,12 @@
                 self.nixosModules.default
                 {
                   system.stateVersion = "26.05";
+                  nixpkgs.config.allowUnfreePredicate =
+                    package:
+                    builtins.elem (nixpkgs.lib.getName package) [
+                      "1password"
+                      "1password-cli"
+                    ];
                   services.displayManager.gdm.enable = true;
                   services.desktopManager.gnome.enable = true;
                   programs.hyprland.enable = true;
@@ -260,6 +271,11 @@
               "su"
               "su-l"
             ];
+          assert evaluatedConfig.programs._1password.enable;
+          assert evaluatedConfig.programs._1password-gui.enable;
+          assert evaluatedConfig.programs._1password-gui.polkitPolicyOwners == [ "alice" ];
+          assert evaluatedConfig.security.wrappers.op.setgid;
+          assert nixpkgs.lib.hasSuffix "/bin/op" evaluatedConfig.security.wrappers.op.source;
           assert nixpkgs.lib.hasInfix "/managed-users/alice"
             evaluatedConfig.systemd.services.tenkr-workstation-setup-state.script;
           (pkgsFor system).runCommand "check-nixos-module" { } ''

@@ -35,7 +35,10 @@ def command(*args, discard=False, timeout=120):
                             stderr=subprocess.PIPE, text=True, timeout=timeout, check=False,
                             env=auth_environment() if args[0] == "gh" else None)
     if result.returncode:
-        raise RuntimeError(f"{args[0]} failed. Verify account access and retry.")
+        operation = next((value for value in args[1:] if value in {
+            "api", "read", "item", "vault", "config", "init", "commit", "verify-commit"
+        }), "operation")
+        raise RuntimeError(f"{args[0]} {operation} failed. Verify account access and retry.")
     return result.stdout
 
 
@@ -122,9 +125,10 @@ def managed_ssh_config(existing):
             existing = existing.split(end, 1)[1].lstrip("\n")
         else:
             block, separator, rest = existing[len(header):].partition("\n\n")
-            if not separator and any(line.strip() and not line.strip().startswith(
-                    ("Host github.com", "Host *", "IdentityFile ", "IdentitiesOnly ", "IdentityAgent "))
-                    for line in block.splitlines()):
+            expected = ["Host github.com", "IdentityFile ~/.ssh/tenkr-github-authentication.pub",
+                        "IdentitiesOnly yes", "Host *", "IdentityAgent ~/.1password/agent.sock"]
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if lines != expected[:len(lines)]:
                 raise RuntimeError("The existing managed SSH block has no boundary. Add a blank line before personal settings in ~/.ssh/config and retry.")
             existing = rest
     return (header + "Host github.com\n  IdentityFile ~/.ssh/tenkr-github-authentication.pub\n"
