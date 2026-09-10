@@ -1,12 +1,29 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from tenkr_workstation_setup.probes import ProbeResult, keyring
+from tenkr_workstation_setup.probes import ProbeResult, github, keyring
 
 
 class ProbeTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.probes._run", return_value=Mock(returncode=0))
+    @patch("tenkr_workstation_setup.ssh_setup.signing_configuration", return_value={"user.name": "Alice (Engineer)"})
+    def test_github_requires_successful_signing_with_current_settings(self, config, _run):
+        with tempfile.TemporaryDirectory() as directory, patch.object(Path, "home", return_value=Path(directory)):
+            home = Path(directory)
+            (home / ".ssh").mkdir()
+            for filename in ("tenkr-github-authentication.pub", "tenkr-git-signing.pub"):
+                (home / ".ssh" / filename).write_text("ssh-ed25519 AAAA\n")
+            self.assertFalse(github().complete)
+            receipt = home / ".config/10kr/workstation-setup/signing-verification.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"key": "ssh-ed25519 AAAA", "settings": config.return_value}))
+            self.assertTrue(github().complete)
+            config.return_value = {"user.name": "Changed identity"}
+            self.assertFalse(github().complete)
+
     def test_keyring_requires_a_1password_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.object(Path, "home", return_value=Path(directory)):
             self.assertEqual(

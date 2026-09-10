@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import tomllib
 from .identity import git_identity
 
@@ -50,6 +51,37 @@ def register(key, role, title):
         raise RuntimeError("GitHub did not retain the public-key registration.")
 
 
+def signing_configuration():
+    name, email = git_identity()
+    settings = {}
+    for setting, expected in (("user.name", name), ("user.email", email),
+                              ("gpg.format", "ssh"), ("commit.gpgsign", "true"),
+                              ("tag.gpgsign", "true")):
+        settings[setting] = command("git", "config", "--global", "--get", setting).strip()
+        if settings[setting] != expected:
+            raise RuntimeError("Git identity or signing settings do not match the workstation policy.")
+    for setting in ("user.signingkey", "gpg.ssh.program"):
+        settings[setting] = command("git", "config", "--global", "--get", setting).strip()
+    return settings
+
+
+def verify_signing(public_key):
+    """Exercise the configured Git signer without creating a commit in a user's repo."""
+    signing_configuration()
+    with tempfile.TemporaryDirectory(prefix="tenkr-signing-check-") as directory:
+        root = Path(directory)
+        allowed = root / "allowed_signers"
+        # A fixed principal avoids interpreting an email address as allowed-signers syntax.
+        allowed.write_text(f"tenkr-onboarding {public_key}\n")
+        repo = root / "repository"
+        command("git", "init", "--quiet", "--template=", str(repo))
+        command("git", "-C", str(repo), "-c", "core.hooksPath=/dev/null",
+                "commit", "--allow-empty", "--no-verify", "-m", "Verify workstation signing")
+        # Verify with OpenSSH independently of the configured signing application.
+        command("git", "-C", str(repo), "-c", "gpg.ssh.program=ssh-keygen",
+                "-c", f"gpg.ssh.allowedSignersFile={allowed}", "verify-commit", "HEAD")
+
+
 def configure(vault, home=None):
     name, email = git_identity()
     if not re.fullmatch(r"[A-Za-z0-9 _.-]+", vault) or not name.strip() or "@" not in email:
@@ -58,6 +90,8 @@ def configure(vault, home=None):
     if signer is None:
         raise RuntimeError("The 1Password SSH signing program is not installed.")
     home = Path.home() if home is None else Path(home)
+    receipt = home / ".config/10kr/workstation-setup/signing-verification.json"
+    receipt.unlink(missing_ok=True)
     login = json.loads(command("gh", "api", "user"))["login"]
     keys = {}
     for role in ("authentication", "signing"):
@@ -91,4 +125,7 @@ def configure(vault, home=None):
                            ("user.signingkey", str(ssh / "tenkr-git-signing.pub")),
                            ("commit.gpgsign", "true"), ("tag.gpgsign", "true")):
         command("git", "config", "--global", setting, value)
+    verify_signing(keys["signing"][1])
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(json.dumps({"key": keys["signing"][1], "settings": signing_configuration()}))
     return keys

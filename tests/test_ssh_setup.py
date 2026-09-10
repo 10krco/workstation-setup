@@ -1,8 +1,12 @@
 import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
-from tenkr_workstation_setup.ssh_setup import ensure_item, register
+from tenkr_workstation_setup.ssh_setup import ensure_item, register, verify_signing
 
 
 class SshSetupTest(unittest.TestCase):
@@ -38,3 +42,31 @@ class SshSetupTest(unittest.TestCase):
         command.side_effect = ["[[]]", "{}", json.dumps([[{"key": "ssh-ed25519 AAAA"}]])]
         register("ssh-ed25519 AAAA", "authentication", "title")
         self.assertEqual(command.call_count, 3)
+
+
+class SigningIntegrationTest(unittest.TestCase):
+    @patch("tenkr_workstation_setup.ssh_setup.git_identity", return_value=("Alice Example (Engineer)", "alice@10kr.co"))
+    def test_real_signature_verified_and_wrong_key_rejected(self, _identity):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            # Isolate every Git configuration source from the actual workstation.
+            environment = {key: value for key, value in os.environ.items()
+                           if not key.startswith("GIT_")}
+            environment.update(HOME=directory, XDG_CONFIG_HOME=directory,
+                               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(home / "gitconfig"))
+            with patch.dict(os.environ, environment, clear=True):
+                for filename in ("signer", "other"):
+                    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+                                    "-f", str(home / filename)], check=True, capture_output=True)
+                for setting, value in (("user.name", "Alice Example (Engineer)"),
+                                       ("user.email", "alice@10kr.co"), ("gpg.format", "ssh"),
+                                       ("gpg.ssh.program", "ssh-keygen"),
+                                       ("user.signingkey", str(home / "signer")),
+                                       ("commit.gpgsign", "true"), ("tag.gpgsign", "true")):
+                    subprocess.run(["git", "config", "--global", setting, value], check=True)
+                verify_signing((home / "signer.pub").read_text().strip())
+                with self.assertRaises(RuntimeError):
+                    verify_signing((home / "other.pub").read_text().strip())
+                subprocess.run(["git", "config", "--global", "user.name", "Wrong identity"], check=True)
+                with self.assertRaises(RuntimeError):
+                    verify_signing((home / "signer.pub").read_text().strip())
