@@ -9,7 +9,11 @@
 }:
 
 let
-  python = python3.withPackages (packages: [ packages.pygobject3 ]);
+  python = python3.withPackages (packages: [
+    packages.pygobject3
+    packages.dbus-python
+    packages.python-pam
+  ]);
 in
 stdenvNoCC.mkDerivation {
   pname = "tenkr-workstation-setup";
@@ -39,6 +43,14 @@ stdenvNoCC.mkDerivation {
     raise SystemExit(main())
     EOF
     chmod +x "$out/bin/tenkr-workstation-setup"
+    cat > "$out/bin/tenkr-workstation-setup-service" <<EOF
+    #!${python}/bin/python
+    import sys
+    sys.path.insert(0, "$out/lib/tenkr-workstation-setup")
+    from tenkr_workstation_setup.service import main
+    main()
+    EOF
+    chmod +x "$out/bin/tenkr-workstation-setup-service"
     runHook postInstall
   '';
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import pwd
 from pathlib import Path
 import subprocess
 
@@ -29,10 +30,10 @@ def _run(*command: str, timeout: int = 5) -> subprocess.CompletedProcess[str] | 
 
 
 def password() -> ProbeResult:
-    marker = Path("/var/lib/10kr-workstation-setup/password-required") / os.environ.get("USER", "")
-    if marker.exists():
-        return ProbeResult(False, "The supplied one-time password still needs to be replaced.")
-    return ProbeResult(True, "Your personal login password is set.")
+    marker = Path("/var/lib/10kr-workstation-setup/password-set") / pwd.getpwuid(os.getuid()).pw_name
+    if marker.is_file():
+        return ProbeResult(True, "Your personal login password is set.")
+    return ProbeResult(False, "The supplied one-time password still needs to be replaced.")
 
 
 def fingerprint() -> ProbeResult:

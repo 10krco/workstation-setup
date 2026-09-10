@@ -101,8 +101,10 @@ class SetupWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _run_step(self, _button: Gtk.Button, step: Step) -> None:
+        if step.key == "password":
+            self._password_dialog()
+            return
         actions = {
-            "password": ["gnome-control-center", "user-accounts"],
             "fingerprint": ["fprintd-enroll"],
             "onepassword": ["1password"],
         }
@@ -123,6 +125,46 @@ class SetupWindow(Adw.ApplicationWindow):
             "home-manager": "Home Manager remote selection will be connected to this page next.",
         }
         self._message(step.title, descriptions[step.key])
+
+    def _password_dialog(self) -> None:
+        dialog = Adw.AlertDialog(heading="Choose your password",
+                                 body="Enter your supplied password and choose a new password of at least 12 characters.")
+        group = Adw.PreferencesGroup()
+        current = Adw.PasswordEntryRow(title="Supplied password")
+        replacement = Adw.PasswordEntryRow(title="New password")
+        confirmation = Adw.PasswordEntryRow(title="Confirm new password")
+        for row in (current, replacement, confirmation):
+            group.add(row)
+        dialog.set_extra_child(group)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("save", "Set password")
+        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
+
+        def response(_dialog, choice):
+            old, new, confirm = current.get_text(), replacement.get_text(), confirmation.get_text()
+            for row in (current, replacement, confirmation):
+                row.set_text("")
+            if choice != "save":
+                return
+            if new != confirm or len(new) < 12:
+                self._message("Password not changed", "The passwords must match and contain at least 12 characters.")
+                return
+            threading.Thread(target=self._set_password, args=(old, new), daemon=True).start()
+
+        dialog.connect("response", response)
+        dialog.present(self)
+
+    def _set_password(self, current: str, replacement: str) -> None:
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            bus.call_sync("com.tenkr.WorkstationSetup", "/com/tenkr/WorkstationSetup",
+                          "com.tenkr.WorkstationSetup", "SetPassword",
+                          GLib.Variant("(ss)", (current, replacement)), None,
+                          Gio.DBusCallFlags.NONE, 45000, None)
+        except GLib.Error as error:
+            GLib.idle_add(self._message, "Password not changed", str(error))
+        finally:
+            GLib.idle_add(self._refresh)
 
     def _refresh_after_action(self) -> bool:
         self._refresh()

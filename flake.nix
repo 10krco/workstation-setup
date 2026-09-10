@@ -65,7 +65,7 @@
             enable = lib.mkEnableOption "10kR first-login workstation setup";
             package = lib.mkPackageOption self.packages.${pkgs.stdenv.hostPlatform.system} "default" { };
             managedUsers = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
+              type = lib.types.listOf (lib.types.strMatching "[a-z_][a-z0-9_-]*");
               default = [ ];
               example = [ "alice" ];
               description = "Users who must complete workstation enrollment.";
@@ -88,6 +88,10 @@
                 assertion = cfg.managedUsers != [ ];
                 message = "10kR workstation setup requires at least one managed user.";
               }
+              {
+                assertion = config.users.mutableUsers;
+                message = "Workstation enrollment requires mutable users to preserve chosen passwords.";
+              }
             ];
 
             environment.systemPackages = [ cfg.package ];
@@ -100,13 +104,55 @@
             systemd.tmpfiles.rules = [
               "d ${stateDirectory} 0755 root root -"
               "d ${stateDirectory}/completed 0755 root root -"
+              "d ${stateDirectory}/password-set 0755 root root -"
             ];
+
+            security.pam.services.tenkr-workstation-setup.text = ''
+              auth required ${pkgs.linux-pam}/lib/security/pam_unix.so
+              account required ${pkgs.linux-pam}/lib/security/pam_unix.so
+            '';
+
+            environment.etc."dbus-1/system.d/com.tenkr.WorkstationSetup.conf".text = ''
+              <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+                "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+              <busconfig>
+                <policy user="root">
+                  <allow own="com.tenkr.WorkstationSetup"/>
+                </policy>
+                <policy context="default">
+                  <allow send_destination="com.tenkr.WorkstationSetup"
+                    send_interface="com.tenkr.WorkstationSetup" send_member="SetPassword"/>
+                </policy>
+              </busconfig>
+            '';
+
+            systemd.services.tenkr-workstation-setup = {
+              description = "Workstation enrollment password service";
+              wantedBy = [ "multi-user.target" ];
+              requires = [ "tenkr-workstation-setup-state.service" ];
+              after = [
+                "dbus.service"
+                "tenkr-workstation-setup-state.service"
+              ];
+              environment.TENKR_CHPASSWD = "${pkgs.shadow}/bin/chpasswd";
+              serviceConfig = {
+                Type = "dbus";
+                BusName = "com.tenkr.WorkstationSetup";
+                ExecStart = "${cfg.package}/bin/tenkr-workstation-setup-service";
+                UMask = "0077";
+                PrivateTmp = true;
+                ProtectHome = true;
+                LimitCORE = 0;
+              };
+            };
 
             systemd.services.tenkr-workstation-setup-state = {
               description = "Initialize 10kR workstation enrollment state";
               wantedBy = [ "multi-user.target" ];
+              requiredBy = [ "display-manager.service" ];
               before = [ "display-manager.service" ];
               serviceConfig.Type = "oneshot";
+              serviceConfig.RemainAfterExit = true;
               script = ''
                 install -d -m 0755 ${stateDirectory}/managed-users
                 ${lib.concatMapStringsSep "\n" (user: ''
@@ -119,6 +165,9 @@
 
       checks = forAllSystems (system: {
         package = self.packages.${system}.default;
+        password-vm = (pkgsFor system).callPackage ./nix/password-vm.nix {
+          package = self.packages.${system}.default;
+        };
         module =
           let
             evaluated = nixpkgs.lib.nixosSystem {
