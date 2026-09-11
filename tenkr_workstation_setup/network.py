@@ -1,11 +1,10 @@
 """Tailscale setup operations with explicit verification and bounded waiting."""
 import json
-import os
 from pathlib import Path
-import pwd
 import subprocess
 import time
 from urllib.parse import urlparse
+from .completion import protected_record
 
 
 def command(*args, timeout=15):
@@ -15,38 +14,63 @@ def command(*args, timeout=15):
     return result.stdout
 
 
-def prepare(user, executable, root=Path("/var/lib/10kr-workstation-setup")):
-    if (not (root / "managed-users" / user).is_file()
-            or not (root / "password-set" / user).is_file()
-            or (root / "completed" / user).exists()):
+def prepare(user, executable, root=Path("/var/lib/10kr-workstation-setup"), state_owner=0):
+    if (not protected_record(user, "managed-users", root, state_owner)
+            or not protected_record(user, "password-set", root, state_owner)
+            or protected_record(user, "completed", root, state_owner)):
         raise PermissionError("Network setup requires an incomplete managed account with its password set.")
+    # An operator can enable SSH again, so defer both capabilities until all
+    # enrollment checks have succeeded in the privileged completion service.
+    restrict(executable)
+    subprocess.run([executable, "up", "--timeout=2s"], stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, timeout=10, check=False)
+
+
+def restrict(executable):
+    command(executable, "set", "--operator=", "--ssh=false")
+    prefs = json.loads(command(executable, "debug", "prefs"))
+    if prefs.get("OperatorUser") not in (None, "") or prefs.get("RunSSH") is not False:
+        raise RuntimeError("Tailscale could not restrict remote access during setup.")
+
+
+def enable_remote(user, executable):
     command(executable, "set", f"--operator={user}", "--ssh=true")
     prefs = json.loads(command(executable, "debug", "prefs"))
     if prefs.get("OperatorUser") != user or prefs.get("RunSSH") is not True:
-        raise RuntimeError("Tailscale did not save the required operator and SSH settings.")
+        raise RuntimeError("Tailscale could not enable the required operator and SSH settings.")
 
 
 def verify(executable="tailscale"):
+    from gi.repository import Gio, GLib
+    bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+    result = bus.call_sync("com.tenkr.WorkstationSetup", "/com/tenkr/WorkstationSetup",
+                           "com.tenkr.WorkstationSetup", "VerifyNetwork", None,
+                           GLib.VariantType.new("(b)"), Gio.DBusCallFlags.NONE, 35000, None)
+    return result.unpack()[0]
+
+
+def verify_enrollment(executable, expected, operator=None):
     status = json.loads(command(executable, "status", "--json"))
     prefs = json.loads(command(executable, "debug", "prefs"))
-    user = pwd.getpwuid(os.getuid()).pw_name
-    return (status.get("BackendState") == "Running"
-            and prefs.get("RunSSH") is True and prefs.get("OperatorUser") == user)
+    if not (status.get("BackendState") == "Running"
+            and prefs.get("RunSSH") is (operator is not None)
+            and (prefs.get("OperatorUser") or "") == (operator or "")):
+        return False
+    return bool(expected) and (status.get("CurrentTailnet") or {}).get("Name") == expected
 
 
 def connect(cancel, show_url, progress, timeout=300):
     if cancel.is_set():
         return False
-    # up preserves existing preferences; no reset or forced reauthentication.
-    result = subprocess.run(["tailscale", "up", "--timeout=2s"],
-                            capture_output=True, timeout=10, check=False)
+    # PrepareNetwork already starts the connection as root. The user only reads
+    # status and opens the sign-in URL; operator privileges are still withheld.
     deadline = time.monotonic() + timeout
     last_url = None
     while not cancel.is_set():
         status = json.loads(command("tailscale", "status", "--json"))
         if status.get("BackendState") == "Running":
             if not verify():
-                raise RuntimeError("Connected, but operator access or Tailscale SSH is not configured. Retry setup.")
+                raise RuntimeError("The required work tailnet or enrollment access restrictions could not be verified. Check the selected Tailscale account and retry.")
             return True
         url = status.get("AuthURL", "")
         if url and url != last_url:
@@ -55,7 +79,7 @@ def connect(cancel, show_url, progress, timeout=300):
                 raise RuntimeError("Tailscale returned an unexpected sign-in address.")
             show_url(url)
             last_url = url
-        if result.returncode and not url and status.get("BackendState") not in {"NeedsLogin", "Starting", "NeedsMachineAuth"}:
+        if not url and status.get("BackendState") not in {"NeedsLogin", "Starting", "NeedsMachineAuth"}:
             raise RuntimeError("Tailscale could not start. Check connectivity and retry.")
         progress("Finish signing in through your browser." if url else "Waiting for Tailscale or administrator approval…")
         if time.monotonic() >= deadline:

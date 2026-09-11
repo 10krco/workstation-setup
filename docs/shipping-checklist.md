@@ -16,10 +16,21 @@ fleet's fresh-install configuration.
 - [ ] The user sets a new password in the GUI; the old password stops working.
       The replacement survives reboot. Failed operations remain retryable.
 - [ ] Fingerprint enrollment uses the T14 reader, provides scan feedback, supports
-      retry, and verifies the enrolled print. Missing hardware follows an explicit
-      optional-step policy rather than reporting success.
+      retry, and verifies the enrolled print. When fprintd successfully reports
+      no usable reader, the GUI marks the step not required and privileged
+      completion skips it. Service and permission errors remain retryable errors.
 - [ ] The user signs into 1Password and enables CLI integration and its SSH agent.
       The application verifies both and explains any settings that need interaction.
+- [ ] Each workstation user has a 10kR Google Workspace email in `nixos-config`.
+      Onboarding creates or selects a Chrome work profile for that exact address,
+      guides Google sign-in and Chrome sync consent, and verifies the account and
+      required sync configuration: the exact work account, completed consent,
+      active sync transport, no pending authentication or encryption recovery,
+      and every supported category enabled (including bookmarks, preferences,
+      extensions, tabs, history, autofill, and passwords). Effective Workspace
+      policies must permit these categories. Missing consent, disabled categories,
+      a different account, or a policy blocking sync must fail verification.
+      The app must not treat merely opening a Google sign-in page as completion.
 - [ ] Enrollment creates or reuses separate authentication and commit-signing SSH
       keys in the selected 1Password vault without exporting private keys.
 - [ ] SSH uses the 1Password agent after future logins. Git has the user's identity,
@@ -49,7 +60,32 @@ fleet's fresh-install configuration.
 
 ## Evidence so far
 
-The password backend has unit coverage for incorrect credentials, unconfigured
-accounts, invalid input, command failure, repeat changes, and caller-session
-authorization. Its VM check exercises real PAM and password persistence. These
-checks do not yet prove the complete graphical enrollment flow or its login gate.
+The password VM check exercises real PAM, rejects the old password after a GUI
+change, and verifies persistence. Dedicated login-gate, completion, Polkit,
+Tailscale-boundary, and recovery VM checks exercise the privileged enrollment
+boundary and recovery paths. These use disposable accounts and controlled
+fixtures; they do not prove enrollment with live third-party accounts.
+
+The visible disposable VM has exercised the real 1Password welcome screen with
+a persistent right-side guide, including fullscreen behavior and returning to
+setup. Missing CLI integration or an unresponsive SSH agent leaves 1Password
+incomplete. Successful fingerprint enumeration with no devices makes fingerprint
+enrollment optional; enumeration errors still block it. Isolated GUI and probe
+tests cover these decisions.
+
+The target T14's Synaptics reader is visible through fprintd and the existing
+user account reports enrolled left- and right-index prints. This confirms the
+hardware and system service path on the supported model. A fresh-account scan
+through the onboarding window remains part of the final physical acceptance run.
+
+The Wi-Fi VM uses simulated radios and a WPA2 access point to exercise the real
+NetworkManager settings UI and secret-agent prompt. It verifies cancel and retry,
+connects with a fixture password, receives a DHCP address, returns to setup without
+claiming enrollment is complete, and confirms the setup-only network agent exits
+with the guided session. Target-hardware Wi-Fi remains part of the final T14 run.
+
+A separate authenticated acceptance VM is preserved for the user's remaining
+account-consent steps. Do not capture vault screens or secret-bearing output from
+that VM. Full Workspace sync, real key registration/signing, the intended tailnet,
+and the target T14 fingerprint reader still require acceptance evidence. No test
+completion fixture may be represented as successful real account enrollment.

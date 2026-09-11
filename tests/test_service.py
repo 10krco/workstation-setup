@@ -1,10 +1,44 @@
 import unittest
+import dbus
+import subprocess
 from unittest.mock import Mock, patch
 
 from tenkr_workstation_setup.service import EnrollmentService
 
 
 class CallerAuthorizationTest(unittest.TestCase):
+    def test_failed_boot_recovery_restarts_the_service(self):
+        service = Mock(system_checks=Mock())
+        with patch.dict("os.environ", {"TENKR_MANAGED_USERS": '["alice"]',
+                                      "TENKR_TAILSCALE": "/tailscale"}), patch(
+            "tenkr_workstation_setup.service.recover", side_effect=RuntimeError("not ready")
+        ):
+            with self.assertRaises(RuntimeError):
+                EnrollmentService.recover_pending(service)
+
+    def test_completion_requires_a_print_only_when_usable_readers_exist(self):
+        service = Mock(bus=Mock())
+        manager, device = Mock(), Mock()
+        cases = [([], [], False), (["/reader"], [], True),
+                 (["/reader"], ["right-index-finger"], False)]
+        with patch.dict("os.environ", {"TENKR_TAILSCALE": "/tailscale", "TENKR_TAILNET": "example.ts.net"}), \
+             patch("tenkr_workstation_setup.service.verify_enrollment", return_value=True):
+            for devices, fingers, missing in cases:
+                manager.GetDevices.return_value = devices
+                device.ListEnrolledFingers.return_value = fingers
+                with patch("tenkr_workstation_setup.service.dbus.Interface", side_effect=[manager, device]):
+                    self.assertEqual("fingerprint" in EnrollmentService.system_checks(service, "alice"), missing)
+            manager.GetDevices.side_effect = dbus.DBusException("Unavailable", name="org.freedesktop.DBus.Error.ServiceUnknown")
+            with patch("tenkr_workstation_setup.service.dbus.Interface", return_value=manager):
+                self.assertIn("fingerprint", EnrollmentService.system_checks(service, "alice"))
+            manager.GetDevices.side_effect = None
+            manager.GetDevices.return_value = []
+            with patch("tenkr_workstation_setup.service.dbus.Interface", return_value=manager), patch(
+                "tenkr_workstation_setup.service.verify_enrollment",
+                side_effect=subprocess.TimeoutExpired("tailscale", 15),
+            ):
+                self.assertIn("tailscale", EnrollmentService.system_checks(service, "alice"))
+
     def authorize(self, uid=1000, active=True, remote=False, session_uid=1000, kind="wayland"):
         service = Mock(bus=Mock())
         daemon = Mock()
