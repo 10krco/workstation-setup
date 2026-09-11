@@ -3,9 +3,14 @@
   stdenvNoCC,
   python3,
   gtk4,
+  gtk4-layer-shell,
   libadwaita,
   wrapGAppsHook4,
   gobject-introspection,
+  git,
+  openssh,
+  gh,
+  gnome-control-center,
 }:
 
 let
@@ -26,9 +31,25 @@ stdenvNoCC.mkDerivation {
   ];
   buildInputs = [
     gtk4
+    gtk4-layer-shell
     libadwaita
     python
   ];
+
+  preFixup = ''
+    gappsWrapperArgs+=(--set TENKR_LAYER_SHELL_LIBRARY ${gtk4-layer-shell}/lib/libgtk4-layer-shell.so)
+    # NixOS supplies op's security wrapper and the GUI's op-ssh-sign through
+    # the enabled 1Password modules. Preserve those wrappers for desktop IPC.
+    gappsWrapperArgs+=(--suffix PATH : /run/wrappers/bin:/run/current-system/sw/bin)
+    gappsWrapperArgs+=(--prefix PATH : ${
+      lib.makeBinPath [
+        git
+        openssh
+        gh
+        gnome-control-center
+      ]
+    })
+  '';
 
   installPhase = ''
     runHook preInstall
@@ -51,6 +72,14 @@ stdenvNoCC.mkDerivation {
     main()
     EOF
     chmod +x "$out/bin/tenkr-workstation-setup-service"
+    cat > "$out/bin/tenkr-workstation-setup-verify" <<EOF
+    #!${python}/bin/python -I
+    import sys
+    sys.path.insert(0, "$out/lib/tenkr-workstation-setup")
+    from tenkr_workstation_setup.verification import main
+    raise SystemExit(main())
+    EOF
+    chmod +x "$out/bin/tenkr-workstation-setup-verify"
     runHook postInstall
   '';
 

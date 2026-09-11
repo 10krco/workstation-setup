@@ -3,14 +3,16 @@ from pathlib import Path
 import os
 import subprocess
 import tempfile
+from .completion import protected_record
 
 
-def set_password(user, current, replacement, root, authenticate, chpasswd):
+def set_password(user, current, replacement, root, authenticate, chpasswd, state_owner=0):
     root = Path(root)
-    if not (root / "managed-users" / user).is_file():
+    if not protected_record(user, "managed-users", root, state_owner):
         raise PermissionError("This account is not enrolled for workstation setup.")
     marker = root / "password-set" / user
-    if marker.exists() or (root / "completed" / user).exists():
+    if (protected_record(user, "password-set", root, state_owner)
+            or protected_record(user, "completed", root, state_owner)):
         raise PermissionError("The initial password has already been changed.")
     if any(char in replacement for char in "\x00\n\r") or len(replacement) < 12:
         raise ValueError("Choose a password of at least 12 characters without line breaks.")

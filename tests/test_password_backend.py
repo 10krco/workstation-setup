@@ -18,7 +18,8 @@ class PasswordEnrollmentTest(unittest.TestCase):
         self.marker = self.root / "password-set" / "alice"
 
     def change(self, user="alice", replacement="a new long password"):
-        set_password(user, "supplied", replacement, self.root, self.authenticate, "/test/chpasswd")
+        set_password(user, "supplied", replacement, self.root, self.authenticate,
+                     "/test/chpasswd", state_owner=None)
 
     @patch("tenkr_workstation_setup.password_backend.subprocess.run")
     def test_success_records_no_secret_and_prevents_second_change(self, run):

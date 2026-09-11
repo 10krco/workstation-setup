@@ -1,18 +1,19 @@
 # Architecture
 
-This document describes the target experience. The repository is under active
-development and is not ready to enable on shipped machines. Password enrollment,
-fingerprint enrollment, remote personalization, and the session router are implemented; account and key
-creation and privileged completion
-still require implementation and end-to-end verification.
+This document describes the implemented first-login experience and the remaining
+shipping acceptance boundary. Password, fingerprint, account, key, browser,
+keyring, network, personalization, login-gate, recovery, and privileged-completion
+flows are implemented. Live third-party authorization and the complete target-T14
+run still require acceptance evidence before handing a machine to a user.
 
 ## Scope
 
 The first supported target is the Lenovo ThinkPad T14 Gen 7 AMD used by the
 10kR workstation image. The first successful GDM login starts setup in a single
 10kR router session. Later logins resume setup until every required probe passes.
-During that lifecycle, the router launches the application full-screen under
-Cage instead of launching GNOME or Hyprland.
+During that lifecycle, the router launches the application in a dedicated Sway
+session instead of launching GNOME or Hyprland. The session exposes no launcher
+or terminal and reserves space for setup guidance beside third-party apps.
 
 The installer creates the account with a random one-time password and includes
 it in the managed user policy. NixOS uses mutable users, so later fleet
@@ -93,8 +94,9 @@ current user, starts right-index enrollment, renders each `EnrollStatus` signal,
 and verifies the stored print before completing. Cancellation and timeout stop
 the scan and release the device. The module authorizes enrollment and verification
 for active local managed users without granting access to another user's prints.
-The target-hardware enrollment and missing-hardware optional-step policy still
-need acceptance testing and implementation, respectively.
+The missing-reader policy is implemented: a successful device query that returns
+no reader makes the step optional, while enumeration and permission failures stay
+retryable. The target-hardware enrollment still needs final T14 acceptance.
 
 ### 1Password and SSH keys
 
@@ -130,11 +132,12 @@ The application starts Tailscale's browser enrollment. The privileged service
 then makes the caller the local operator and enables Tailscale SSH. Completion
 requires a `Running` backend and an enabled SSH preference.
 
-The implementation sets and verifies the operator and SSH preferences before
-starting `tailscale up` with existing preferences preserved. It obtains the HTTPS
+The implementation restricts remote access during enrollment, obtains the HTTPS
 sign-in URL from daemon status, opens the browser, and waits for login or machine
-approval. Cancellation stops waiting without logging out an existing account.
-Expected-tailnet policy and end-to-end browser acceptance remain shipping work.
+approval. Final completion verifies the expected tailnet and then assigns the
+managed user as operator and enables Tailscale SSH. Cancellation stops waiting
+without logging out an existing account. Live tailnet acceptance remains shipping
+work.
 
 ### Home Manager
 

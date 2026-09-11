@@ -6,19 +6,17 @@ from tenkr_workstation_setup.state import EnrollmentState, STEPS
 
 
 class EnrollmentStateTest(unittest.TestCase):
-    def test_required_steps_gate_completion_and_state_resumes(self) -> None:
+    def test_progress_resumes_without_creating_authoritative_completion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             state = EnrollmentState(root)
-            with self.assertRaises(ValueError):
-                state.finish()
-
             for step in STEPS:
                 if step.required:
                     state.mark_complete(step)
 
-            EnrollmentState(root).finish()
-            self.assertTrue((root / "complete").is_file())
+            resumed = EnrollmentState(root)
+            self.assertTrue(all(resumed.is_complete(step) for step in STEPS if step.required))
+            self.assertFalse((root / "complete").exists())
 
 
 if __name__ == "__main__":

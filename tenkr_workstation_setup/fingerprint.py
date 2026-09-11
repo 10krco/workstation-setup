@@ -9,6 +9,14 @@ DEVICE = SERVICE + ".Device"
 FINGER = "right-index-finger"
 
 
+def available_devices():
+    bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+    result = bus.call_sync(SERVICE, "/net/reactivated/Fprint/Manager",
+                           SERVICE + ".Manager", "GetDevices", None,
+                           GLib.VariantType.new("(ao)"), Gio.DBusCallFlags.NONE, 10000, None)
+    return result.unpack()[0]
+
+
 class Reader:
     def __init__(self):
         self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
