@@ -13,6 +13,12 @@
     {
       packages = forAllSystems (system: {
         default = (pkgsFor system).callPackage ./nix/package.nix { };
+        # This exercises a real graphical Wi-Fi password flow against a virtual
+        # WPA access point. Keep it available for local acceptance testing,
+        # without making every pull request wait for a full desktop VM.
+        wifi-vm = (pkgsFor system).callPackage ./nix/wifi-vm.nix {
+          module = self.nixosModules.default;
+        };
       });
 
       nixosModules.keyring = import ./nix/keyring.nix;
@@ -308,9 +314,6 @@
         };
         recovery-vm = (pkgsFor system).callPackage ./nix/recovery-vm.nix {
           package = self.packages.${system}.default;
-        };
-        wifi-vm = (pkgsFor system).callPackage ./nix/wifi-vm.nix {
-          module = self.nixosModules.default;
         };
         graphical-vm = (pkgsFor system).callPackage ./nix/graphical-vm.nix {
           module = self.nixosModules.default;

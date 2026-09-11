@@ -20,6 +20,14 @@ tenkr-workstation-setup
 
 The flake exports `packages.<system>.default` and `nixosModules.default`.
 
+Virtual-machine acceptance checks are kept out of pull-request CI. The
+graphical Wi-Fi test uses a real virtual WPA access point; run it locally when
+changing guided-session Wi-Fi behavior:
+
+```console
+nix build -L .#wifi-vm
+```
+
 The NixOS module enables the 1Password CLI and desktop application, including
 their security wrappers and Polkit ownership for managed users. The host's
 Nixpkgs configuration must permit the unfree `1password`, `1password-cli`, and `google-chrome`
