@@ -22,17 +22,26 @@ command -v sudo >/dev/null 2>&1 || {
 # shellcheck disable=SC2016
 exec nix shell --extra-experimental-features 'nix-command flakes' \
   nixpkgs#bash nixpkgs#coreutils nixpkgs#gh nixpkgs#git \
-  nixpkgs#openssh nixpkgs#tmux --command bash -euo pipefail -c '
-runtime=$(mktemp -d /tmp/10kr-bootstrap.XXXXXXXX)
+  nixpkgs#iptables nixpkgs#openssh nixpkgs#tmux --command bash -euo pipefail -c '
+runtime_parent=${XDG_RUNTIME_DIR:?The live user runtime directory is unavailable}
+[[ -d "$runtime_parent" && -O "$runtime_parent" ]] || exit 1
+runtime=$(mktemp -d "$runtime_parent/10kr-bootstrap.XXXXXXXX")
 sshd_pid=
+firewall_open=false
 cleanup() {
   set +e
   tmux kill-session -t provision 2>/dev/null
   if [[ -n "$sshd_pid" ]]; then sudo kill "$sshd_pid" 2>/dev/null; fi
+  if [[ "$firewall_open" == true ]]; then
+    sudo iptables -D INPUT -p tcp --dport 2222 -j ACCEPT 2>/dev/null
+  fi
   rm -rf -- "$runtime"
 }
 trap cleanup EXIT HUP INT TERM
 chmod 0700 "$runtime"
+export GH_CONFIG_DIR="$runtime/gh"
+export GIT_CONFIG_GLOBAL="$runtime/gitconfig"
+mkdir -m 0700 "$GH_CONFIG_DIR"
 
 if ! gh auth status >/dev/null 2>&1; then
   gh auth login --hostname github.com --git-protocol https --web </dev/tty >/dev/tty
@@ -74,6 +83,8 @@ Subsystem sftp internal-sftp
 EOF
 sudo "$(command -v sshd)" -f "$runtime/sshd_config" -E "$runtime/sshd.log"
 sshd_pid=$(cat "$runtime/sshd.pid")
+sudo iptables -I INPUT -p tcp --dport 2222 -j ACCEPT
+firewall_open=true
 
 GH_TOKEN=$(gh auth token)
 export GH_TOKEN
@@ -83,6 +94,7 @@ printf -v provision_command "sudo --preserve-env=GH_TOKEN,NIX_CONFIG,TERM %q run
 tmux new-session -d -s provision "$provision_command"
 
 echo "Ephemeral key-only SSH is listening on port 2222." >/dev/tty
+echo "SSH host key fingerprint: $(ssh-keygen -lf "$runtime/ssh_host_ed25519_key.pub")" >/dev/tty
 echo "Connect as $current_user and run: tmux attach -t provision" >/dev/tty
 tmux attach-session -t provision </dev/tty >/dev/tty
 '
