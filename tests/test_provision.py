@@ -75,6 +75,8 @@ elif command == "sudo":
     elif args[:2] == ["test", "-d"]:
         pass
     elif args[:2] == ["test", "-f"]:
+        if args != ["test", "-f", "/iso/nix-store.squashfs"]:
+            raise SystemExit(f"unexpected ISO marker check: {args}")
         if os.environ.get("FAKE_ISO_MARKER_MISSING") == "1":
             raise SystemExit(1)
     elif "tee" in args:
