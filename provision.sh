@@ -9,6 +9,12 @@ if [ "$(id -u)" -eq 0 ]; then
   echo "Run this launcher as the NixOS ISO's nixos user, not root." >&2
   exit 1
 fi
+if ! command -v findmnt >/dev/null 2>&1 \
+  || ! findmnt -rn -M /iso >/dev/null 2>&1 \
+  || [ ! -r /iso/nix-store.squashfs ]; then
+  echo "This launcher must run from a booted official NixOS installation ISO." >&2
+  exit 1
+fi
 command -v nix >/dev/null 2>&1 || {
   echo "This launcher must run on the official NixOS minimal ISO." >&2
   exit 1
@@ -90,7 +96,7 @@ GH_TOKEN=$(gh auth token)
 export GH_TOKEN
 export NIX_CONFIG="access-tokens = github.com=$GH_TOKEN"
 nix_bin=$(command -v nix)
-printf -v provision_command "sudo --preserve-env=GH_TOKEN,NIX_CONFIG,TERM %q run github:10krco/nixos-config#provision" "$nix_bin"
+printf -v provision_command "sudo --preserve-env=GH_TOKEN,NIX_CONFIG,TERM %q run github:10krco/nixos-config/6a56cd3d94b073b6eb3f665ef62f29bf77cb602f#provision" "$nix_bin"
 tmux new-session -d -s provision "$provision_command"
 
 echo "Ephemeral key-only SSH is listening on port 2222." >/dev/tty
