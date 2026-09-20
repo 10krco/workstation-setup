@@ -1,56 +1,22 @@
-# 10kR Workstation Setup
+# 10kr NixOS workstation provisioning
 
-`workstation-setup` is the first-login enrollment application for 10kR-managed
-NixOS workstations. It owns interactive setup that cannot be completed while a
-machine is imaged, including the user's password, fingerprints, 1Password,
-GitHub SSH keys and signing, GNOME Keyring, Tailscale, and an optional Home
-Manager remote.
+Boot the official NixOS minimal ISO in UEFI mode, connect it to the network, and run this command from the `nixos` console user:
 
-The application is designed as a resumable state machine. GDM exposes only its
-full-screen router session to managed users until root-owned enrollment state
-records completion. Private keys and keyring passwords remain in 1Password.
-
-## Development
-
-```console
-nix develop
-python -m unittest discover -s tests
-tenkr-workstation-setup
+```sh
+curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provision.sh | sh
 ```
 
-The flake exports `packages.<system>.default` and `nixosModules.default`.
+The launcher creates a temporary environment containing GitHub CLI, OpenSSH, and tmux. It authenticates the administrator with GitHub, authorizes only that administrator's published GitHub SSH keys, starts an ephemeral SSH server on port 2222, and launches the private fleet provisioner in a tmux session. Password authentication and root SSH login remain disabled.
 
-Virtual-machine acceptance checks are kept out of pull-request CI. The
-graphical Wi-Fi test uses a real virtual WPA access point; run it locally when
-changing guided-session Wi-Fi behavior:
+The launcher requires NixOS's installer-system marker and live ISO filesystem,
+then invokes the private provisioner at a reviewed, immutable commit.
 
-```console
-nix build -L .#wifi-vm
-```
+Before entering any provisioning or recovery secret over SSH, compare the host-key fingerprint displayed by the SSH client with the fingerprint printed on the ISO console.
 
-The NixOS module enables the 1Password CLI and desktop application, including
-their security wrappers and Polkit ownership for managed users. The host's
-Nixpkgs configuration must permit the unfree `1password`, `1password-cli`, and `google-chrome`
-packages. The application retains the system wrapper paths so CLI integration
-uses the installed security wrapper rather than an unwrapped store binary.
+The private provisioner requires a candidate machine entry in `10krco/nixos-config`. It checks UEFI, TPM 2.0, hardware assignment, and eligible internal disks before accepting the exact confirmation `ERASE <machine-id>`. Secrets are read from `/dev/tty`; provisioning and recovery values are stored in the `Provisioning` 1Password vault.
 
-The module supplies Chrome, a GTK portal backend, and a graphical Polkit agent
-inside a dedicated Sway session with no desktop launcher or terminal bindings.
-The compositor's display environment is published before
-starting setup so applications activated through D-Bus can display their windows.
-The authentication agent and compositor exit with setup. While a third-party app
-is open, a reserved panel on the right provides numbered instructions and a
-return button, including when the app requests fullscreen.
+After installation, review and merge the generated enrollment/promotion pull request before booting the installed system. The PR contains only the installation UUID, machine age recipient, and read-only deploy-key ID. The installed system refuses GitOps promotion if its local installation UUID does not match the canonical configuration.
 
-1Password integrations must be enabled in the app. Its Linux preferences include
-authentication tags for the SSH-agent and CLI switches; setup does not rewrite
-these internal settings. The checklist requires a live SSH-agent response and a
-successful desktop CLI request, discarding all CLI output. Enabling a preference
-or merely creating an agent socket does not mark the step complete.
+If enrollment PR creation is interrupted after installation, mount the installed root at `/mnt` and rerun the launcher. Then use the provisioner's `--resume-enrollment <machine-id>` option.
 
-The default module also installs the daily 1Password/keyring user services needed
-by the application-secrets step. For workstations that only need that integration,
-import `nixosModules.keyring` and enable `services.tenkr-keyring.enable`; configure
-`programs._1password-gui.polkitPolicyOwners` for their users. The services start
-only for users with an enrolled secret-reference file. Passwords pass directly
-from the system CLI wrapper to GNOME Keyring through a pipe.
+This repository intentionally contains only this document and `provision.sh`. It does not build or publish installation media; use the official NixOS minimal ISO.
