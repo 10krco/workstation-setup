@@ -30,7 +30,9 @@ esac
 
 umask 077
 bootstrap_root="$(mktemp -d "${TMPDIR:-/tmp}/nixos-bootstrap.XXXXXX")"
-trap 'rm -rf -- "$bootstrap_root"' EXIT INT TERM
+trap 'rm -rf -- "$bootstrap_root"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 inner="$bootstrap_root/launcher"
 
 cat >"$inner" <<'INNER'
@@ -43,12 +45,16 @@ die() {
 }
 
 bootstrap_root="$(dirname "$0")"
+installed_authorization=false
+started_sshd=false
 remote_ready=false
 
 cleanup() {
   unset OP_SESSION || true
-  if [[ "${1:-}" == remote && "$remote_ready" != true ]]; then
+  if [[ "${1:-}" == remote && "$remote_ready" != true && "$installed_authorization" == true ]]; then
     sudo rm -f /root/.ssh/authorized_keys >/dev/null 2>&1 || true
+  fi
+  if [[ "${1:-}" == remote && "$remote_ready" != true && "$started_sshd" == true ]]; then
     sudo systemctl stop sshd >/dev/null 2>&1 || true
   fi
 }
@@ -94,11 +100,13 @@ local_install() {
     || die "nixos-config checkout is not clean"
   [[ "$(git -C "$checkout" rev-parse HEAD)" == "$(git -C "$checkout" rev-parse refs/remotes/origin/main)" ]] \
     || die "nixos-config checkout does not match current origin/main"
-  bash "$checkout/scripts/provision-target" install-local "$host"
+  (cd "$checkout" && bash scripts/provision-target install-local "$host")
 }
 
 remote_access() {
   local public_key
+  sudo test -d /sys/firmware/efi || die "target was not booted in UEFI mode"
+  findmnt /iso >/dev/null || die "remote access must run from the official NixOS ISO"
   if sudo test -s /root/.ssh/authorized_keys; then
     die "the live ISO already has root SSH authorization; remove it deliberately before continuing"
   fi
@@ -107,8 +115,10 @@ remote_access() {
     || die "expected one Ed25519 public key"
   sudo install -d -m 0700 /root/.ssh
   printf '%s\n' "$public_key" | sudo tee /root/.ssh/authorized_keys >/dev/null
+  installed_authorization=true
   sudo chmod 0600 /root/.ssh/authorized_keys
   sudo systemctl start sshd
+  started_sshd=true
   printf 'Target addresses:\n'
   ip -brief address show scope global
   printf 'Target SSH host-key fingerprint:\n'
@@ -116,7 +126,9 @@ remote_access() {
   remote_ready=true
 }
 
-trap 'cleanup "${1:-}"' EXIT INT TERM
+trap 'cleanup "${1:-}"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 case "$1" in
   local) local_install "$2" ;;
   remote) remote_access ;;
@@ -130,10 +142,14 @@ export NIXPKGS_ALLOW_UNFREE=1
 nix shell \
   --impure \
   nixpkgs#bash \
+  nixpkgs#age \
   nixpkgs#coreutils \
   nixpkgs#gh \
   nixpkgs#git \
   nixpkgs#iproute2 \
+  nixpkgs#jq \
   nixpkgs#openssh \
+  nixpkgs#sops \
+  nixpkgs#util-linux \
   nixpkgs#_1password-cli \
   --command bash "$inner" "$@"

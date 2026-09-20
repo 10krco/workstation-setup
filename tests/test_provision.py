@@ -29,6 +29,9 @@ with (state / "calls.jsonl").open("a") as stream:
 if command == "nix":
     if os.environ.get("NIXPKGS_ALLOW_UNFREE") != "1" or "--impure" not in args:
         raise SystemExit("1Password CLI requires explicit unfree evaluation")
+    for package in ("nixpkgs#age", "nixpkgs#jq", "nixpkgs#sops", "nixpkgs#util-linux"):
+        if package not in args:
+            raise SystemExit(f"missing target dependency: {package}")
     index = args.index("--command")
     raise SystemExit(subprocess.run(args[index + 1 :]).returncode)
 elif command == "op":
@@ -53,7 +56,7 @@ elif command == "gh":
         destination = Path(args[3])
         (destination / "scripts").mkdir(parents=True)
         target = destination / "scripts" / "provision-target"
-        target.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >\"$FAKE_STATE/handoff\"\n")
+        target.write_text("#!/usr/bin/env bash\nprintf '%s\\n%s\\n' \"$*\" \"$PWD\" >\"$FAKE_STATE/handoff\"\n")
         target.chmod(target.stat().st_mode | stat.S_IXUSR)
     else:
         raise SystemExit(f"unexpected gh arguments: {args}")
@@ -68,13 +71,17 @@ elif command == "git":
         raise SystemExit(f"unexpected git arguments: {args}")
 elif command == "sudo":
     if args[:2] == ["test", "-s"]:
-        raise SystemExit(1)
+        raise SystemExit(0 if os.environ.get("FAKE_EXISTING_AUTHORIZED_KEYS") == "1" else 1)
+    elif args[:2] == ["test", "-d"]:
+        pass
     elif "tee" in args:
         sys.stdin.read()
     elif "ssh-keygen" in args:
         print("256 SHA256:targetfingerprint root@test (ED25519)")
 elif command == "ip":
     print("eth0 UP 192.0.2.25/24")
+elif command == "findmnt":
+    pass
 else:
     raise SystemExit(f"unexpected fake command: {command}")
 '''
@@ -92,7 +99,7 @@ class ProvisionLauncherTest(unittest.TestCase):
         fake = self.bin / "fake-command"
         fake.write_text(FAKE_COMMAND.replace("PYTHON", sys.executable, 1))
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-        for command in ("gh", "git", "ip", "nix", "op", "sudo"):
+        for command in ("findmnt", "gh", "git", "ip", "nix", "op", "sudo"):
             (self.bin / command).symlink_to(fake)
         self.env = os.environ.copy()
         self.env.update(
@@ -124,7 +131,9 @@ class ProvisionLauncherTest(unittest.TestCase):
         result = self.run_launcher("local", "test-host")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.state / "handoff").read_text(), "install-local test-host\n")
+        handoff = (self.state / "handoff").read_text().splitlines()
+        self.assertEqual(handoff[0], "install-local test-host")
+        self.assertTrue(handoff[1].endswith("/nixos-config"))
         gh_clone = next(call for call in self.calls() if call["command"] == "gh" and call["args"][:2] == ["repo", "clone"])
         self.assertIn("--branch", gh_clone["args"])
         self.assertIn("main", gh_clone["args"])
@@ -151,8 +160,21 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertIn("192.0.2.25", result.stdout)
         self.assertIn("SHA256:targetfingerprint", result.stdout)
         sudo_calls = [call["args"] for call in self.calls() if call["command"] == "sudo"]
+        self.assertTrue(any(args == ["test", "-d", "/sys/firmware/efi"] for args in sudo_calls))
         self.assertTrue(any("/root/.ssh/authorized_keys" in args for args in sudo_calls))
         self.assertTrue(any("sshd" in args and "start" in args for args in sudo_calls))
+        self.assertFalse(any(args[:2] == ["rm", "-f"] for args in sudo_calls))
+        self.assertFalse(any("sshd" in args and "stop" in args for args in sudo_calls))
+
+    def test_remote_refusal_preserves_existing_authorized_keys(self):
+        self.env["FAKE_EXISTING_AUTHORIZED_KEYS"] = "1"
+
+        result = self.run_launcher("remote")
+
+        self.assertNotEqual(result.returncode, 0)
+        sudo_calls = [call["args"] for call in self.calls() if call["command"] == "sudo"]
+        self.assertFalse(any(args[:2] == ["rm", "-f"] for args in sudo_calls))
+        self.assertFalse(any("sshd" in args and "stop" in args for args in sudo_calls))
 
     def test_launcher_rejects_revision_or_extra_arguments(self):
         result = self.run_launcher("local", "test-host", "deadbeef")
