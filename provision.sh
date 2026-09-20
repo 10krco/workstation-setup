@@ -107,7 +107,7 @@ remote_access() {
   local public_key
   sudo test -d /sys/firmware/efi || die "target was not booted in UEFI mode"
   findmnt /iso >/dev/null || die "remote access must run from the official NixOS ISO"
-  sudo test -e /iso/nix-store.squashfs \
+  sudo test -f /iso/nix-store.squashfs \
     || die "remote access must run from the official NixOS ISO"
   if sudo test -s /root/.ssh/authorized_keys; then
     die "the live ISO already has root SSH authorization; remove it deliberately before continuing"

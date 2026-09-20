@@ -74,7 +74,7 @@ elif command == "sudo":
         raise SystemExit(0 if os.environ.get("FAKE_EXISTING_AUTHORIZED_KEYS") == "1" else 1)
     elif args[:2] == ["test", "-d"]:
         pass
-    elif args[:2] == ["test", "-e"]:
+    elif args[:2] == ["test", "-f"]:
         if os.environ.get("FAKE_ISO_MARKER_MISSING") == "1":
             raise SystemExit(1)
     elif "tee" in args:
