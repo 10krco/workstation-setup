@@ -74,6 +74,9 @@ elif command == "sudo":
         raise SystemExit(0 if os.environ.get("FAKE_EXISTING_AUTHORIZED_KEYS") == "1" else 1)
     elif args[:2] == ["test", "-d"]:
         pass
+    elif args[:2] == ["test", "-e"]:
+        if os.environ.get("FAKE_ISO_MARKER_MISSING") == "1":
+            raise SystemExit(1)
     elif "tee" in args:
         sys.stdin.read()
     elif "ssh-keygen" in args:
@@ -82,6 +85,10 @@ elif command == "ip":
     print("eth0 UP 192.0.2.25/24")
 elif command == "findmnt":
     pass
+elif command == "ssh-keygen":
+    if os.environ.get("FAKE_INVALID_PUBLIC_KEY") == "1":
+        raise SystemExit(1)
+    print("256 SHA256:adminfingerprint admin (ED25519)")
 else:
     raise SystemExit(f"unexpected fake command: {command}")
 '''
@@ -99,7 +106,7 @@ class ProvisionLauncherTest(unittest.TestCase):
         fake = self.bin / "fake-command"
         fake.write_text(FAKE_COMMAND.replace("PYTHON", sys.executable, 1))
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-        for command in ("findmnt", "gh", "git", "ip", "nix", "op", "sudo"):
+        for command in ("findmnt", "gh", "git", "ip", "nix", "op", "ssh-keygen", "sudo"):
             (self.bin / command).symlink_to(fake)
         self.env = os.environ.copy()
         self.env.update(
@@ -152,7 +159,7 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertFalse(any(path.name.startswith("nixos-bootstrap.") for path in self.root.iterdir()))
 
     def test_remote_installs_ephemeral_key_and_prints_connection_evidence(self):
-        public_key = "ssh-ed25519 AAAATEST admin-install"
+        public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGwXlUIgMZDNewfvIyX5Gd1B1dIuLT7lH6N+2+FrSaSU admin-install"
 
         result = self.run_launcher("remote", input_text=public_key + "\n")
 
@@ -165,6 +172,37 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertTrue(any("sshd" in args and "start" in args for args in sudo_calls))
         self.assertFalse(any(args[:2] == ["rm", "-f"] for args in sudo_calls))
         self.assertFalse(any("sshd" in args and "stop" in args for args in sudo_calls))
+
+    def test_remote_rejects_missing_iso_marker_before_root_mutation(self):
+        self.env["FAKE_ISO_MARKER_MISSING"] = "1"
+
+        result = self.run_launcher("remote")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("iso", result.stderr.lower())
+        sudo_calls = [call["args"] for call in self.calls() if call["command"] == "sudo"]
+        self.assertFalse(any("tee" in args or "sshd" in args for args in sudo_calls))
+
+    def test_remote_rejects_malformed_ed25519_key_before_root_mutation(self):
+        self.env["FAKE_INVALID_PUBLIC_KEY"] = "1"
+
+        result = self.run_launcher("remote", input_text="ssh-ed25519 AAAATEST admin-install\n")
+
+        self.assertNotEqual(result.returncode, 0)
+        sudo_calls = [call["args"] for call in self.calls() if call["command"] == "sudo"]
+        self.assertFalse(any("tee" in args or "sshd" in args for args in sudo_calls))
+
+    def test_remote_arms_cleanup_before_external_mutations(self):
+        script = SCRIPT.read_text()
+
+        self.assertLess(
+            script.index("installed_authorization=true"),
+            script.index("sudo tee /root/.ssh/authorized_keys"),
+        )
+        self.assertLess(
+            script.index("started_sshd=true"),
+            script.index("sudo systemctl start sshd"),
+        )
 
     def test_remote_refusal_preserves_existing_authorized_keys(self):
         self.env["FAKE_EXISTING_AUTHORIZED_KEYS"] = "1"
@@ -182,6 +220,18 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("usage", result.stderr.lower())
         self.assertEqual(self.calls(), [])
+
+    def test_launcher_rejects_invalid_hostname_boundaries_and_length(self):
+        for hostname in ("host-", "a" * 64):
+            with self.subTest(hostname=hostname):
+                result = self.run_launcher("local", hostname)
+                self.assertEqual(result.returncode, 2)
+
+    def test_readme_downloads_launcher_before_execution(self):
+        readme = (REPOSITORY / "README.md").read_text()
+        self.assertNotIn("bash <(curl", readme)
+        self.assertGreaterEqual(readme.count("curl -fsSL"), 2)
+        self.assertGreaterEqual(readme.count('-o "$script"'), 2)
 
 
 if __name__ == "__main__":

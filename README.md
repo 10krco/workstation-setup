@@ -10,7 +10,7 @@ repository.
 Boot the official NixOS minimal ISO in UEFI mode, connect networking, and run:
 
 ```console
-bash <(curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provision.sh) local HOSTNAME
+(script="$(mktemp)" && trap 'rm -f "$script"' EXIT && curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provision.sh -o "$script" && bash "$script" local HOSTNAME)
 ```
 
 The launcher opens a temporary Nix shell, authenticates the 1Password CLI,
@@ -24,7 +24,7 @@ Start `scripts/provision-admin install-remote HOSTNAME` on the administrator
 machine. When it prints an ephemeral SSH public key, run this on the target ISO:
 
 ```console
-bash <(curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provision.sh) remote
+(script="$(mktemp)" && trap 'rm -f "$script"' EXIT && curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provision.sh -o "$script" && bash "$script" remote)
 ```
 
 Paste the public key. The launcher starts temporary ISO SSH access and prints

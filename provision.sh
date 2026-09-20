@@ -11,7 +11,7 @@ EOF
 
 case "${1:-}" in
   local)
-    [[ $# -eq 2 && "$2" =~ ^[a-z0-9][a-z0-9-]*$ ]] || {
+    [[ $# -eq 2 && "$2" =~ ^([a-z0-9]|[a-z0-9][a-z0-9-]{0,61}[a-z0-9])$ ]] || {
       usage
       exit 2
     }
@@ -107,18 +107,24 @@ remote_access() {
   local public_key
   sudo test -d /sys/firmware/efi || die "target was not booted in UEFI mode"
   findmnt /iso >/dev/null || die "remote access must run from the official NixOS ISO"
+  sudo test -e /iso/nix-store.squashfs \
+    || die "remote access must run from the official NixOS ISO"
   if sudo test -s /root/.ssh/authorized_keys; then
     die "the live ISO already has root SSH authorization; remove it deliberately before continuing"
   fi
   read -r -p 'Paste the ephemeral administrator SSH public key: ' public_key
   [[ "$public_key" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+([[:space:]].*)?$ ]] \
     || die "expected one Ed25519 public key"
+  local public_key_file="$bootstrap_root/public-key"
+  printf '%s\n' "$public_key" >"$public_key_file"
+  ssh-keygen -l -f "$public_key_file" >/dev/null \
+    || die "expected one valid Ed25519 public key"
   sudo install -d -m 0700 /root/.ssh
-  printf '%s\n' "$public_key" | sudo tee /root/.ssh/authorized_keys >/dev/null
   installed_authorization=true
+  printf '%s\n' "$public_key" | sudo tee /root/.ssh/authorized_keys >/dev/null
   sudo chmod 0600 /root/.ssh/authorized_keys
-  sudo systemctl start sshd
   started_sshd=true
+  sudo systemctl start sshd
   printf 'Target addresses:\n'
   ip -brief address show scope global
   printf 'Target SSH host-key fingerprint:\n'
