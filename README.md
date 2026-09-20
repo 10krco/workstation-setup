@@ -10,13 +10,14 @@ repository.
 Boot the official NixOS minimal ISO in UEFI mode, connect networking, and run:
 
 ```console
-(script="$(mktemp)" && trap 'rm -f "$script"' EXIT && curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provision.sh -o "$script" && bash "$script" local HOSTNAME)
+curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/bootstrap.sh | sh
 ```
 
 The launcher opens a temporary Nix shell, authenticates the 1Password CLI,
 retrieves that host's repository-read token, clones the current reviewed
 `nixos-config/main`, verifies the checkout, and hands control to
-`scripts/provision-target install-local`. It accepts no revision argument.
+`scripts/provision-target install-local`. Choose `local` and enter the hostname
+when prompted. It accepts no revision argument.
 
 ## Prepare a later machine for nixos-anywhere
 
@@ -24,12 +25,13 @@ Start `scripts/provision-admin install-remote HOSTNAME` on the administrator
 machine. When it prints an ephemeral SSH public key, run this on the target ISO:
 
 ```console
-(script="$(mktemp)" && trap 'rm -f "$script"' EXIT && curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provision.sh -o "$script" && bash "$script" remote)
+curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/bootstrap.sh | sh
 ```
 
-Paste the public key. The launcher starts temporary ISO SSH access and prints
-the target addresses and host-key fingerprint. Enter those values only into the
-waiting administrator command and compare the fingerprint at the target console.
+Choose `remote`, then paste the public key. The launcher starts temporary ISO
+SSH access and prints the target addresses and host-key fingerprint. Enter those
+values only into the waiting administrator command and compare the fingerprint
+at the target console.
 
 The launcher does not format disks, install NixOS, persist credentials, select a
 configuration revision, or reboot a machine.
