@@ -13,6 +13,10 @@ then invokes the private provisioner at a reviewed, immutable commit.
 
 Before entering any provisioning or recovery secret over SSH, compare the host-key fingerprint displayed by the SSH client with the fingerprint printed on the ISO console.
 
+If provisioning exits, tmux keeps its output visible so you can read the error.
+Press `Ctrl-b`, then `d` on the original console to close the launcher and clean
+up its temporary SSH service and credentials before retrying.
+
 The private provisioner requires a candidate machine entry in `10krco/nixos-config`. It checks UEFI, TPM 2.0, hardware assignment, and eligible internal disks before accepting the exact confirmation `ERASE <machine-id>`. Secrets are read from `/dev/tty`; provisioning and recovery values are stored in the `Provisioning` 1Password vault.
 
 After installation, review and merge the generated enrollment/promotion pull request before booting the installed system. The PR contains only the installation UUID, machine age recipient, and read-only deploy-key ID. The installed system refuses GitOps promotion if its local installation UUID does not match the canonical configuration.
