@@ -97,11 +97,15 @@ GH_TOKEN=$(gh auth token)
 export GH_TOKEN
 export NIX_CONFIG="access-tokens = github.com=$GH_TOKEN"
 nix_bin=$(command -v nix)
-printf -v provision_command "sudo --preserve-env=GH_TOKEN,NIX_CONFIG,TERM %q run github:10krco/nixos-config/6a56cd3d94b073b6eb3f665ef62f29bf77cb602f#provision" "$nix_bin"
-tmux new-session -d -s provision "$provision_command"
+printf -v provision_command "sudo --preserve-env=GH_TOKEN,NIX_CONFIG,TERM %q --extra-experimental-features %q run github:10krco/nixos-config/ff6c0f777db08a98913a233a130539363c0d09ac#provision" "$nix_bin" "nix-command flakes"
+tmux new-session -d -s provision \
+  \; set-option -t provision remain-on-exit on \
+  \; respawn-pane -k -t provision "$provision_command"
 
 echo "Ephemeral key-only SSH is listening on port 2222." >/dev/tty
 echo "SSH host key fingerprint: $(ssh-keygen -lf "$runtime/ssh_host_ed25519_key.pub")" >/dev/tty
 echo "Connect as $current_user and run: tmux attach -t provision" >/dev/tty
-tmux attach-session -t provision </dev/tty >/dev/tty
+# stdout still refers to the real console/PTY even when stdin is the curl pipe.
+# tmux rejects /dev/tty as a client terminal, so duplicate the real terminal fd.
+tmux attach-session -t provision <&1
 '
