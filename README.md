@@ -8,8 +8,8 @@ curl -fsSL https://raw.githubusercontent.com/10krco/workstation-setup/main/provi
 
 The launcher creates a temporary environment containing GitHub CLI, OpenSSH, and tmux. It authenticates the administrator with GitHub, authorizes only that administrator's published GitHub SSH keys, starts an ephemeral SSH server on port 2222, and launches the private fleet provisioner in a tmux session. Password authentication and root SSH login remain disabled.
 
-The launcher refuses to run outside a booted NixOS installation ISO and invokes
-the private provisioner at a reviewed, immutable commit.
+The launcher requires NixOS's installer-system marker and live ISO filesystem,
+then invokes the private provisioner at a reviewed, immutable commit.
 
 Before entering any provisioning or recovery secret over SSH, compare the host-key fingerprint displayed by the SSH client with the fingerprint printed on the ISO console.
 

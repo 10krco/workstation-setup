@@ -9,7 +9,8 @@ if [ "$(id -u)" -eq 0 ]; then
   echo "Run this launcher as the NixOS ISO's nixos user, not root." >&2
   exit 1
 fi
-if ! command -v findmnt >/dev/null 2>&1 \
+if ! grep -qx 'VARIANT_ID=installer' /etc/os-release \
+  || ! command -v findmnt >/dev/null 2>&1 \
   || ! findmnt -rn -M /iso >/dev/null 2>&1 \
   || [ ! -r /iso/nix-store.squashfs ]; then
   echo "This launcher must run from a booted official NixOS installation ISO." >&2
