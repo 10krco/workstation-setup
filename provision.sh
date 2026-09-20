@@ -9,6 +9,18 @@ Usage:
 EOF
 }
 
+if (( $# == 0 )); then
+  read -r -p 'Provisioning mode [local/remote] (local): ' mode
+  mode="${mode:-local}"
+  if [[ "$mode" == local ]]; then
+    read -r -p 'Hostname: ' host
+    set -- local "$host"
+  else
+    set -- "$mode"
+  fi
+  unset mode host
+fi
+
 case "${1:-}" in
   local)
     [[ $# -eq 2 && "$2" =~ ^([a-z0-9]|[a-z0-9][a-z0-9-]{0,61}[a-z0-9])$ ]] || {
@@ -52,21 +64,21 @@ remote_ready=false
 cleanup() {
   unset OP_SESSION || true
   if [[ "${1:-}" == remote && "$remote_ready" != true && "$installed_authorization" == true ]]; then
-    sudo rm -f /root/.ssh/authorized_keys >/dev/null 2>&1 || true
+    sudo rm -f /root/.ssh/authorized_keys || true
   fi
   if [[ "${1:-}" == remote && "$remote_ready" != true && "$started_sshd" == true ]]; then
-    sudo systemctl stop sshd >/dev/null 2>&1 || true
+    sudo systemctl stop sshd || true
   fi
 }
 
 local_install() {
   local host=$1
-  local session account email
+  local session account email accounts
   account="${NIXOS_PROVISIONING_OP_ACCOUNT:-team-10kr.1password.com}"
-  if ! op whoami >/dev/null 2>&1; then
-    if session="$(op signin --raw 2>/dev/null)" && [[ -n "$session" ]]; then
-      export OP_SESSION="$session"
-    else
+  if ! op whoami; then
+    accounts="$(op account list --format json)" \
+      || die "could not inspect configured 1Password accounts"
+    if (( $(jq -r 'length' <<<"$accounts") == 0 )); then
       if ! read -r -p '1Password email: ' email || [[ -z "$email" ]]; then
         die "1Password authentication requires an account email"
       fi
@@ -78,11 +90,13 @@ local_install() {
           --signin \
           --raw
       )" || die "1Password authentication failed"
-      [[ -n "$session" ]] || die "1Password authentication returned an empty session"
-      export OP_SESSION="$session"
+    else
+      session="$(op signin --raw)" || die "1Password authentication failed"
     fi
+    [[ -n "$session" ]] || die "1Password authentication returned an empty session"
+    export OP_SESSION="$session"
   fi
-  unset session email
+  unset session email accounts
 
   export GH_CONFIG_DIR="$bootstrap_root/gh"
   install -d -m 0700 "$GH_CONFIG_DIR"
@@ -106,7 +120,7 @@ local_install() {
 remote_access() {
   local public_key
   sudo test -d /sys/firmware/efi || die "target was not booted in UEFI mode"
-  findmnt /iso >/dev/null || die "remote access must run from the official NixOS ISO"
+  findmnt /iso || die "remote access must run from the official NixOS ISO"
   sudo test -f /iso/nix-store.squashfs \
     || die "remote access must run from the official NixOS ISO"
   if sudo test -s /root/.ssh/authorized_keys; then
@@ -117,11 +131,11 @@ remote_access() {
     || die "expected one Ed25519 public key"
   local public_key_file="$bootstrap_root/public-key"
   printf '%s\n' "$public_key" >"$public_key_file"
-  ssh-keygen -l -f "$public_key_file" >/dev/null \
+  ssh-keygen -l -f "$public_key_file" \
     || die "expected one valid Ed25519 public key"
   sudo install -d -m 0700 /root/.ssh
   installed_authorization=true
-  printf '%s\n' "$public_key" | sudo tee /root/.ssh/authorized_keys >/dev/null
+  printf '%s\n' "$public_key" | sudo tee /root/.ssh/authorized_keys
   sudo chmod 0600 /root/.ssh/authorized_keys
   started_sshd=true
   sudo systemctl start sshd
@@ -132,10 +146,11 @@ remote_access() {
   remote_ready=true
 }
 
-trap 'cleanup "${1:-}"' EXIT
+operation=$1
+trap 'cleanup "$operation"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-case "$1" in
+case "$operation" in
   local) local_install "$2" ;;
   remote) remote_access ;;
 esac
