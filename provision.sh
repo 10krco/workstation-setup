@@ -70,18 +70,18 @@ local_install() {
       if ! read -r -p '1Password email: ' email || [[ -z "$email" ]]; then
         die "1Password authentication requires an account email"
       fi
-      session="$(
-        op account add \
-          --address "$account" \
-          --email "$email" \
-          --shorthand tenkr-provisioning \
-          --signin \
-          --raw
-      )" || die "1Password authentication failed"
+      op account add \
+        --address "$account" \
+        --email "$email" \
+        --shorthand tenkr-provisioning \
+        || die "failed to add the 1Password account"
+      session="$(op signin --account tenkr-provisioning --raw)" \
+        || die "1Password authentication failed after adding the account"
       [[ -n "$session" ]] || die "1Password authentication returned an empty session"
       export OP_SESSION="$session"
     fi
   fi
+  op whoami >/dev/null 2>&1 || die "1Password authentication could not be verified"
   unset session email
 
   export GH_CONFIG_DIR="$bootstrap_root/gh"

@@ -38,13 +38,23 @@ elif command == "op":
     if args[:1] == ["whoami"]:
         if os.environ.get("FAKE_OP_AUTH_FAILURE") == "1":
             raise SystemExit(1)
+        if os.environ.get("FAKE_OP_NEEDS_ACCOUNT") == "1" and not (state / "op-signed-in").exists():
+            raise SystemExit(1)
         print("test@example.com")
     elif args[:1] == ["read"]:
         print("github_pat_secret", end="")
     elif args[:2] == ["signin", "--raw"]:
+        if os.environ.get("FAKE_OP_NEEDS_ACCOUNT") == "1":
+            raise SystemExit(1)
         if os.environ.get("FAKE_OP_AUTH_FAILURE") == "1":
             raise SystemExit(1)
         print("session-token")
+    elif args == ["signin", "--account", "tenkr-provisioning", "--raw"]:
+        (state / "op-signed-in").touch()
+        print("account-session-token")
+    elif args[:2] == ["account", "add"]:
+        if "--signin" in args or "--raw" in args:
+            raise SystemExit("account creation and sign-in must be separate")
     else:
         raise SystemExit(f"unexpected op arguments: {args}")
 elif command == "gh":
@@ -159,6 +169,24 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertIn("1password", result.stderr.lower())
         self.assertFalse(any(call["command"] == "gh" for call in self.calls()))
         self.assertFalse(any(path.name.startswith("nixos-bootstrap.") for path in self.root.iterdir()))
+
+    def test_local_signs_in_again_after_adding_account_before_github_authentication(self):
+        self.env["FAKE_OP_NEEDS_ACCOUNT"] = "1"
+
+        result = self.run_launcher("local", "test-host", input_text="test@example.com\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        operations = [(call["command"], call["args"]) for call in calls]
+        account_add = next(index for index, operation in enumerate(operations) if operation[0] == "op" and operation[1][:2] == ["account", "add"])
+        expected_signin = ("op", ["signin", "--account", "tenkr-provisioning", "--raw"])
+        self.assertIn(expected_signin, operations)
+        account_signin = operations.index(expected_signin)
+        authenticated = next(index for index, operation in enumerate(operations[account_signin + 1 :], account_signin + 1) if operation[0] == "op" and operation[1][:1] == ["whoami"])
+        github_auth = next(index for index, operation in enumerate(operations) if operation[0] == "gh")
+        self.assertLess(account_add, account_signin)
+        self.assertLess(account_signin, authenticated)
+        self.assertLess(authenticated, github_auth)
 
     def test_remote_installs_ephemeral_key_and_prints_connection_evidence(self):
         public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGwXlUIgMZDNewfvIyX5Gd1B1dIuLT7lH6N+2+FrSaSU admin-install"
