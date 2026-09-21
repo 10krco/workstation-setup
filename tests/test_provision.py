@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import pty
+import select
 import stat
 import subprocess
 import sys
@@ -10,6 +12,7 @@ import unittest
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SCRIPT = REPOSITORY / "provision.sh"
+BOOTSTRAP = REPOSITORY / "bootstrap.sh"
 
 
 FAKE_COMMAND = r'''#!PYTHON
@@ -36,25 +39,37 @@ if command == "nix":
     raise SystemExit(subprocess.run(args[index + 1 :]).returncode)
 elif command == "op":
     if args[:1] == ["whoami"]:
-        if os.environ.get("FAKE_OP_AUTH_FAILURE") == "1":
+        if os.environ.get("FAKE_OP_SIGNED_OUT") == "1" and not (state / "op-signed-in").exists():
             raise SystemExit(1)
-        if os.environ.get("FAKE_OP_NEEDS_ACCOUNT") == "1" and not (state / "op-signed-in").exists():
+        if os.environ.get("FAKE_OP_NO_ACCOUNTS") == "1" and not (state / "op-signed-in").exists():
             raise SystemExit(1)
         print("test@example.com")
+    elif args[:2] == ["account", "list"]:
+        if os.environ.get("FAKE_OP_NO_ACCOUNTS") == "1":
+            print("[]")
+        else:
+            print('[{"url": "team-10kr.1password.com"}]')
+    elif args[:2] == ["account", "add"]:
+        print("Visible 1Password account-add prompt", file=sys.stderr)
+        if os.environ.get("FAKE_OP_AUTH_FAILURE") == "1":
+            raise SystemExit(1)
+        if "--signin" in args or "--raw" in args:
+            raise SystemExit("account creation and sign-in must be separate")
     elif args[:1] == ["read"]:
         print("github_pat_secret", end="")
     elif args[:2] == ["signin", "--raw"]:
-        if os.environ.get("FAKE_OP_NEEDS_ACCOUNT") == "1":
-            raise SystemExit(1)
+        print("Visible 1Password sign-in prompt", file=sys.stderr)
         if os.environ.get("FAKE_OP_AUTH_FAILURE") == "1":
             raise SystemExit(1)
+        if os.environ.get("FAKE_OP_NO_ACCOUNTS") == "1":
+            sys.stdin.readline()
+            raise SystemExit("signin must not run before an account is configured")
+        (state / "op-signed-in").touch()
         print("session-token")
     elif args == ["signin", "--account", "tenkr-provisioning", "--raw"]:
+        print("Visible 1Password sign-in prompt", file=sys.stderr)
         (state / "op-signed-in").touch()
         print("account-session-token")
-    elif args[:2] == ["account", "add"]:
-        if "--signin" in args or "--raw" in args:
-            raise SystemExit("account creation and sign-in must be separate")
     else:
         raise SystemExit(f"unexpected op arguments: {args}")
 elif command == "gh":
@@ -79,6 +94,13 @@ elif command == "git":
         print("main-revision")
     else:
         raise SystemExit(f"unexpected git arguments: {args}")
+elif command == "curl":
+    output = Path(args[args.index("-o") + 1])
+    output.write_text(
+        "#!/usr/bin/env bash\n"
+        "read -r -p 'Downloaded launcher prompt: ' answer\n"
+        "printf 'terminal answer: %s\\n' \"$answer\"\n"
+    )
 elif command == "sudo":
     if args[:2] == ["test", "-s"]:
         raise SystemExit(0 if os.environ.get("FAKE_EXISTING_AUTHORIZED_KEYS") == "1" else 1)
@@ -91,12 +113,20 @@ elif command == "sudo":
             raise SystemExit(1)
     elif "tee" in args:
         sys.stdin.read()
+        print("authorized key installed")
+    elif args[:2] == ["rm", "-f"]:
+        print("removed temporary authorization", file=sys.stderr)
+    elif "systemctl" in args and "start" in args:
+        if os.environ.get("FAKE_SSHD_START_FAILURE") == "1":
+            raise SystemExit("failed to start sshd")
+    elif "systemctl" in args and "stop" in args:
+        print("stopped temporary sshd", file=sys.stderr)
     elif "ssh-keygen" in args:
         print("256 SHA256:targetfingerprint root@test (ED25519)")
 elif command == "ip":
     print("eth0 UP 192.0.2.25/24")
 elif command == "findmnt":
-    pass
+    print("ISO mount verified")
 elif command == "ssh-keygen":
     if os.environ.get("FAKE_INVALID_PUBLIC_KEY") == "1":
         raise SystemExit(1)
@@ -118,7 +148,7 @@ class ProvisionLauncherTest(unittest.TestCase):
         fake = self.bin / "fake-command"
         fake.write_text(FAKE_COMMAND.replace("PYTHON", sys.executable, 1))
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-        for command in ("findmnt", "gh", "git", "ip", "nix", "op", "ssh-keygen", "sudo"):
+        for command in ("curl", "findmnt", "gh", "git", "ip", "nix", "op", "ssh-keygen", "sudo"):
             (self.bin / command).symlink_to(fake)
         self.env = os.environ.copy()
         self.env.update(
@@ -160,7 +190,48 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertNotIn("github_pat_secret", serialized)
         self.assertFalse(any(path.name.startswith("nixos-bootstrap.") for path in self.root.iterdir()))
 
+    def test_no_arguments_prompts_for_mode_and_local_hostname(self):
+        result = self.run_launcher(input_text="\ntest-host\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        handoff = (self.state / "handoff").read_text().splitlines()
+        self.assertEqual(handoff[0], "install-local test-host")
+
+    def test_piped_posix_bootstrap_gives_downloaded_launcher_the_terminal(self):
+        self.assertTrue(BOOTSTRAP.exists(), "bootstrap.sh must provide the pipe-friendly entry point")
+        read_end, write_end = os.pipe()
+        child, master = pty.fork()
+        if child == 0:
+            os.dup2(read_end, 0)
+            os.close(read_end)
+            os.close(write_end)
+            os.execvpe("sh", ["sh"], self.env)
+
+        os.close(read_end)
+        os.write(write_end, BOOTSTRAP.read_bytes())
+        os.close(write_end)
+        output = bytearray()
+        answered = False
+        while True:
+            ready, _, _ = select.select([master], [], [], 5)
+            self.assertTrue(ready, output.decode(errors="replace"))
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+            if not answered and b"Downloaded launcher prompt:" in output:
+                os.write(master, b"from-tty\n")
+                answered = True
+        _, status = os.waitpid(child, 0)
+        rendered = output.decode(errors="replace")
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0, rendered)
+        self.assertIn("terminal answer: from-tty", rendered)
+
     def test_local_authentication_failure_never_clones(self):
+        self.env["FAKE_OP_SIGNED_OUT"] = "1"
         self.env["FAKE_OP_AUTH_FAILURE"] = "1"
 
         result = self.run_launcher("local", "test-host")
@@ -170,23 +241,32 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertFalse(any(call["command"] == "gh" for call in self.calls()))
         self.assertFalse(any(path.name.startswith("nixos-bootstrap.") for path in self.root.iterdir()))
 
-    def test_local_signs_in_again_after_adding_account_before_github_authentication(self):
-        self.env["FAKE_OP_NEEDS_ACCOUNT"] = "1"
+    def test_local_adds_missing_account_then_signs_in_before_github_authentication(self):
+        self.env["FAKE_OP_NO_ACCOUNTS"] = "1"
 
-        result = self.run_launcher("local", "test-host", input_text="test@example.com\n")
+        result = self.run_launcher("local", "test-host", input_text="user@example.com\n")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.calls()
-        operations = [(call["command"], call["args"]) for call in calls]
-        account_add = next(index for index, operation in enumerate(operations) if operation[0] == "op" and operation[1][:2] == ["account", "add"])
-        expected_signin = ("op", ["signin", "--account", "tenkr-provisioning", "--raw"])
-        self.assertIn(expected_signin, operations)
-        account_signin = operations.index(expected_signin)
-        authenticated = next(index for index, operation in enumerate(operations[account_signin + 1 :], account_signin + 1) if operation[0] == "op" and operation[1][:1] == ["whoami"])
-        github_auth = next(index for index, operation in enumerate(operations) if operation[0] == "gh")
-        self.assertLess(account_add, account_signin)
-        self.assertLess(account_signin, authenticated)
-        self.assertLess(authenticated, github_auth)
+        op_calls = [call["args"] for call in calls if call["command"] == "op"]
+        self.assertIn(["account", "list", "--format", "json"], op_calls)
+        account_add = next(args for args in op_calls if args[:2] == ["account", "add"])
+        self.assertIn("user@example.com", account_add)
+        self.assertNotIn("--signin", account_add)
+        self.assertNotIn("--raw", account_add)
+        self.assertIn(["signin", "--account", "tenkr-provisioning", "--raw"], op_calls)
+        verified = max(index for index, call in enumerate(calls) if call["command"] == "op" and call["args"] == ["whoami"])
+        github_auth = next(index for index, call in enumerate(calls) if call["command"] == "gh")
+        self.assertLess(verified, github_auth)
+        self.assertIn("Visible 1Password account-add prompt", result.stderr)
+
+    def test_local_keeps_interactive_signin_prompts_visible(self):
+        self.env["FAKE_OP_SIGNED_OUT"] = "1"
+
+        result = self.run_launcher("local", "test-host")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Visible 1Password sign-in prompt", result.stderr)
 
     def test_remote_installs_ephemeral_key_and_prints_connection_evidence(self):
         public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGwXlUIgMZDNewfvIyX5Gd1B1dIuLT7lH6N+2+FrSaSU admin-install"
@@ -196,12 +276,34 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("192.0.2.25", result.stdout)
         self.assertIn("SHA256:targetfingerprint", result.stdout)
+        self.assertIn("ISO mount verified", result.stdout)
+        self.assertIn("SHA256:adminfingerprint", result.stdout)
+        self.assertIn("authorized key installed", result.stdout)
         sudo_calls = [call["args"] for call in self.calls() if call["command"] == "sudo"]
         self.assertTrue(any(args == ["test", "-d", "/sys/firmware/efi"] for args in sudo_calls))
         self.assertTrue(any("/root/.ssh/authorized_keys" in args for args in sudo_calls))
         self.assertTrue(any("sshd" in args and "start" in args for args in sudo_calls))
         self.assertFalse(any(args[:2] == ["rm", "-f"] for args in sudo_calls))
         self.assertFalse(any("sshd" in args and "stop" in args for args in sudo_calls))
+
+    def test_no_arguments_can_select_remote(self):
+        public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGwXlUIgMZDNewfvIyX5Gd1B1dIuLT7lH6N+2+FrSaSU admin-install"
+
+        result = self.run_launcher(input_text=f"remote\n{public_key}\n")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Target addresses:", result.stdout)
+
+    def test_remote_keeps_cleanup_diagnostics_visible(self):
+        self.env["FAKE_SSHD_START_FAILURE"] = "1"
+        public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGwXlUIgMZDNewfvIyX5Gd1B1dIuLT7lH6N+2+FrSaSU admin-install"
+
+        result = self.run_launcher("remote", input_text=public_key + "\n")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("failed to start sshd", result.stderr)
+        self.assertIn("removed temporary authorization", result.stderr)
+        self.assertIn("stopped temporary sshd", result.stderr)
 
     def test_remote_rejects_missing_iso_marker_before_root_mutation(self):
         self.env["FAKE_ISO_MARKER_MISSING"] = "1"
@@ -257,11 +359,14 @@ class ProvisionLauncherTest(unittest.TestCase):
                 result = self.run_launcher("local", hostname)
                 self.assertEqual(result.returncode, 2)
 
-    def test_readme_downloads_launcher_before_execution(self):
+    def test_readme_uses_memorable_pipe_friendly_bootstrap(self):
         readme = (REPOSITORY / "README.md").read_text()
-        self.assertNotIn("bash <(curl", readme)
-        self.assertGreaterEqual(readme.count("curl -fsSL"), 2)
-        self.assertGreaterEqual(readme.count('-o "$script"'), 2)
+        command = (
+            "curl -fsSL "
+            "https://raw.githubusercontent.com/10krco/workstation-setup/main/bootstrap.sh | sh"
+        )
+        self.assertEqual(readme.count(command), 2)
+        self.assertNotIn("mktemp", readme)
 
 
 if __name__ == "__main__":
