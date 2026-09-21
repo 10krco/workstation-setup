@@ -39,7 +39,9 @@ if command == "nix":
     raise SystemExit(subprocess.run(args[index + 1 :]).returncode)
 elif command == "op":
     if args[:1] == ["whoami"]:
-        if os.environ.get("FAKE_OP_SIGNED_OUT") == "1" or os.environ.get("FAKE_OP_NO_ACCOUNTS") == "1":
+        if os.environ.get("FAKE_OP_SIGNED_OUT") == "1" and not (state / "op-signed-in").exists():
+            raise SystemExit(1)
+        if os.environ.get("FAKE_OP_NO_ACCOUNTS") == "1" and not (state / "op-signed-in").exists():
             raise SystemExit(1)
         print("test@example.com")
     elif args[:2] == ["account", "list"]:
@@ -51,7 +53,8 @@ elif command == "op":
         print("Visible 1Password account-add prompt", file=sys.stderr)
         if os.environ.get("FAKE_OP_AUTH_FAILURE") == "1":
             raise SystemExit(1)
-        print("session-token")
+        if "--signin" in args or "--raw" in args:
+            raise SystemExit("account creation and sign-in must be separate")
     elif args[:1] == ["read"]:
         print("github_pat_secret", end="")
     elif args[:2] == ["signin", "--raw"]:
@@ -61,7 +64,12 @@ elif command == "op":
         if os.environ.get("FAKE_OP_NO_ACCOUNTS") == "1":
             sys.stdin.readline()
             raise SystemExit("signin must not run before an account is configured")
+        (state / "op-signed-in").touch()
         print("session-token")
+    elif args == ["signin", "--account", "tenkr-provisioning", "--raw"]:
+        print("Visible 1Password sign-in prompt", file=sys.stderr)
+        (state / "op-signed-in").touch()
+        print("account-session-token")
     else:
         raise SystemExit(f"unexpected op arguments: {args}")
 elif command == "gh":
@@ -233,17 +241,23 @@ class ProvisionLauncherTest(unittest.TestCase):
         self.assertFalse(any(call["command"] == "gh" for call in self.calls()))
         self.assertFalse(any(path.name.startswith("nixos-bootstrap.") for path in self.root.iterdir()))
 
-    def test_local_adds_missing_account_before_signing_in(self):
+    def test_local_adds_missing_account_then_signs_in_before_github_authentication(self):
         self.env["FAKE_OP_NO_ACCOUNTS"] = "1"
 
         result = self.run_launcher("local", "test-host", input_text="user@example.com\n")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        op_calls = [call["args"] for call in self.calls() if call["command"] == "op"]
+        calls = self.calls()
+        op_calls = [call["args"] for call in calls if call["command"] == "op"]
         self.assertIn(["account", "list", "--format", "json"], op_calls)
         account_add = next(args for args in op_calls if args[:2] == ["account", "add"])
         self.assertIn("user@example.com", account_add)
-        self.assertFalse(any(args[:1] == ["signin"] for args in op_calls))
+        self.assertNotIn("--signin", account_add)
+        self.assertNotIn("--raw", account_add)
+        self.assertIn(["signin", "--account", "tenkr-provisioning", "--raw"], op_calls)
+        verified = max(index for index, call in enumerate(calls) if call["command"] == "op" and call["args"] == ["whoami"])
+        github_auth = next(index for index, call in enumerate(calls) if call["command"] == "gh")
+        self.assertLess(verified, github_auth)
         self.assertIn("Visible 1Password account-add prompt", result.stderr)
 
     def test_local_keeps_interactive_signin_prompts_visible(self):
