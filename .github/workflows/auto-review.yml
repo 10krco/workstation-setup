@@ -17,7 +17,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' && !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     steps:
       - uses: jwilger/auto_review/deploy/github-action@37f7893cd56e51dbd2e9d01f4c665bf2671630bd # v1.5.0
