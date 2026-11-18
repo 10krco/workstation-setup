@@ -14,6 +14,8 @@ concurrency:
 
 jobs:
   auto-review:
+    # Forks get no secrets and drafts are not reviewed. Dependabot pull
+    # requests are reviewed: AUTO_REVIEW_CI_TOKEN is also an org Dependabot secret.
     if: >-
       github.event_name == 'pull_request' && !github.event.pull_request.draft &&
       github.event.pull_request.head.repo.full_name == github.repository
