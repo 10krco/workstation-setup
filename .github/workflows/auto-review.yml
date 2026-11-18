@@ -1,0 +1,27 @@
+# Semantic review by 10kR's auto_review. This repository has no CI to wait
+# for, so every pull request is reviewed as it changes.
+name: auto_review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: auto-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-review:
+    # Forks get no secrets and drafts are not reviewed. Dependabot pull
+    # requests are reviewed: AUTO_REVIEW_CI_TOKEN is also an org Dependabot secret.
+    if: >-
+      github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: jwilger/auto_review/deploy/github-action@37f7893cd56e51dbd2e9d01f4c665bf2671630bd # v1.5.0
+        with:
+          gateway-url: https://review.orgdotcomdotnet.com
+          action-token: ${{ secrets.AUTO_REVIEW_CI_TOKEN }}
